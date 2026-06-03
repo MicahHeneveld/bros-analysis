@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+
+.repo_cleanup_backup/
+
+data/raw_videos/
+data/frames/
+data/datasets/ssbu_players/images/
+
+runs/
+*.pt
+*.cache
