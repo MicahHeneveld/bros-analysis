@@ -97,6 +97,48 @@ pip install -r requirements.txt
 python -c "import sys, torch; print('Python', sys.version.split()[0], 'torch', getattr(torch, '__version__', 'not installed'))"
 ```
 
+## Extracting Frames
+
+Use [`extract_frames.py`](/c:/bros-analysis/extract_frames.py) to extract local video frames for labeling or dataset assembly.
+
+- **Basic usage:**
+
+```powershell
+python extract_frames.py "data/raw_videos/YTMP3GG_YouTube_UAS-Finale-GRAND-FINALS-MkLeo-Pyra-Mythr_Media_hI9gPuGN07c_001_1080p.mp4"
+```
+
+This writes frames to:
+
+```text
+data/frames/<video_stem>/
+```
+
+- **Choose a custom output directory:**
+
+```powershell
+python extract_frames.py "path/to/video.mp4" -o data/frames/myvideo
+```
+
+- **Change the frame interval:**
+
+```powershell
+python extract_frames.py "path/to/video.mp4" -n 30
+```
+
+The script saves every `N`th frame as a `.jpg` file using this naming pattern:
+
+```text
+<video_stem>_frame_000000.jpg
+<video_stem>_frame_000015.jpg
+<video_stem>_frame_000030.jpg
+...
+```
+
+- **Arguments:**
+  - `video`: input video path
+  - `-o`, `--outdir`: optional output directory
+  - `-n`, `--every`: save every Nth frame, default `15`
+
 - **Example: run a short training command using Ultralytics (uses the included `yolo11n.pt`):**
 
 ```powershell
