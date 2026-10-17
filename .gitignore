@@ -25,6 +25,11 @@ data/raw_videos/
 data/frames/
 data/datasets/ssbu_players/images/
 
+# Source videos are large; keep them out of history
+*.mp4
+*.mkv
+*.webm
+
 runs/
 *.pt
 *.cache

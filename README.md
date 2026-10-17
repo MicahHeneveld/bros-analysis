@@ -73,6 +73,7 @@ scripts/
   predict_ssbu.py            # trained checkpoint → raw predictions (Colab)
   stage_dataset.py           # Drive dataset zip → local staging dir
   sync_labels.py             # edited labels + review log → Drive
+  measure_distance.py        # per-frame fighter separation (zoom-corrected)
 notebooks/
   train_ssbu_colab.ipynb     # one-click Colab launcher (mount + run train_ssbu.py)
   predict_ssbu_colab.ipynb   # one-click Colab prediction run for the overlay
@@ -125,6 +126,33 @@ is faster for bulk review — but then you must review every frame before traini
 or the model learns to agree with itself.
 
 Details: [docs/video_ingest.md](docs/video_ingest.md)
+
+## Measuring how far apart the fighters are
+
+```bash
+python scripts/measure_distance.py .staging/ingested/match
+```
+
+Writes `distance.csv` (per frame, with timestamps) and `distance.summary.json`.
+
+SSBU's camera zooms out as fighters separate — apparent fighter height spans
+6.5%–73% of frame height, an **11x** range — so distances in raw pixels are
+wrong by up to an order of magnitude. The metric normalises by fighter height,
+which is proportional to 1/depth, cancelling the zoom:
+
+    distance = pixel_separation / mean_apparent_fighter_height
+
+That gives separation in **body-lengths**, needs no calibration, and works on
+any stage. Measured on 1,654 frames of unseen footage: mean 2.26, median 1.92.
+
+It is blind to *depth* separation (two fighters front-to-back read as close). A
+ground-plane inversion that would recover depth was implemented and validated
+against a synthetic camera to 0.00% error, but **does not work on real SSBU
+footage** (R² ≈ 0.01): apparent height is dominated by character identity and
+pose rather than depth. It is available behind `--ground` and documented as
+research, not measurement.
+
+Details and evidence: [docs/distance_metric.md](docs/distance_metric.md)
 
 ## Everyday workflow
 

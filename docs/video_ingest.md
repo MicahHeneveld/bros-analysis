@@ -152,3 +152,8 @@ about 18,000 sampled frames, so budget 10–20 minutes.
   labelled as such. Splitting a montage into matches is still manual.
 - **The gate trusts the detector.** If the model is weak on a stage or skin, the
   gate rejects good frames. `--min-players 0` shows what it is throwing away.
+- **Montage videos lose their single-player clips.** `--min-players 2` keeps only
+  frames with both fighters, which is right for distance work but discards
+  zoomed combo clips that would still be useful training data. For a montage,
+  either accept the loss (~33% of frames survived on the UltRank test video) or
+  run a second pass with `--min-players 1` into a separate output directory.

@@ -598,6 +598,96 @@ def test_ingest_gating() -> None:
     )
 
 
+def test_distance_metric() -> None:
+    """Pin the geometry against a synthetic camera with known ground truth.
+
+    The whole point of the body-lengths metric is that it cancels zoom, and of
+    the ground-plane model that it recovers depth. Both are claims that are easy
+    to get subtly wrong, so they are checked against a camera whose parameters
+    are known exactly rather than against recorded output.
+    """
+    print("\n[distance]")
+    import math
+
+    from distance import DEFAULT_G, body_lengths, calibrate, measure
+
+    W, H = 1920, 1080
+    G = DEFAULT_G
+    F = G * H          # focal length in pixels
+    CAM_H = 2.5        # camera height above the floor, in fighter-heights
+    HORIZON = 0.32 * H
+
+    def to_box(X: float, Z: float) -> dict:
+        """Project a fighter standing on the floor at world (X, Z)."""
+        x = W / 2 + F * X / Z
+        y = HORIZON + F * CAM_H / Z
+        hpx = F / Z
+        return {"xc": x / W, "yc": (y - hpx / 2) / H, "w": (hpx * 0.7) / W, "h": hpx / H, "cls": 0}
+
+    # Same depth: body-lengths must be exact, and both metrics must agree.
+    a, b = to_box(0.0, 12.0), to_box(4.0, 12.0)
+    body, ratio = body_lengths(a, b, W, H)
+    check("same-depth body-lengths is exact", abs(body - 4.0) < 1e-6, f"got {body:.4f}")
+    check("same-depth ratio is 1", abs(ratio - 1.0) < 1e-6, f"got {ratio:.4f}")
+
+    # A zoom change must not move the body-lengths reading. Same separation at
+    # half the depth means the camera zoomed in 2x; the answer is unchanged.
+    az, bz = to_box(0.0, 6.0), to_box(4.0, 6.0)
+    body_z, _ = body_lengths(az, bz, W, H)
+    check("body-lengths is invariant to zoom", abs(body_z - body) < 1e-6,
+          f"{body:.4f} at Z=12 vs {body_z:.4f} at Z=6")
+
+    # Calibration must recover the camera it was generated from.
+    pairs = [
+        (to_box(x1, z1), to_box(x2, z2))
+        for x1, z1, x2, z2 in [
+            (-3.0, 10.0, 2.0, 11.0), (1.0, 12.0, 5.0, 12.5),
+            (-1.0, 9.0, 3.5, 9.5), (0.5, 13.0, 4.0, 13.2),
+            (-2.0, 11.0, 1.5, 11.4), (2.0, 10.5, 6.0, 10.8),
+            (-4.0, 12.0, 0.0, 12.1), (1.5, 11.5, 5.5, 11.9),
+        ] * 6  # enough points to clear MIN_CALIBRATION_SAMPLES
+    ]
+    cal = calibrate(pairs, W, H)
+    check("calibration succeeds on exact data", cal is not None)
+    if cal:
+        check("calibration recovers the horizon", abs(cal.horizon_norm - HORIZON / H) < 0.01,
+              f"{cal.horizon_norm:.4f} vs {HORIZON / H:.4f}")
+        check("calibration recovers camera height", abs(cal.camera_height - CAM_H) < 0.05,
+              f"{cal.camera_height:.3f} vs {CAM_H:.3f}")
+        check("calibration fit is strong", cal.r2 > 0.99, f"R2={cal.r2:.3f}")
+
+        # Ground plane must recover pure depth separation, which body-lengths
+        # cannot see at all. This is the whole reason the model exists.
+        d1, d2 = to_box(0.0, 10.0), to_box(0.0, 15.0)
+        m = measure(d1, d2, W, H, cal)
+        check("ground recovers pure depth separation",
+              m.ground_lengths is not None and abs(m.ground_lengths - 5.0) < 0.05,
+              f"got {m.ground_lengths}")
+        body_depth, _ = body_lengths(d1, d2, W, H)
+        check("body-lengths badly under-reports pure depth", body_depth < 2.0,
+              f"{body_depth:.2f} against a true 5.0")
+        check("depth component dominates for depth-only pair",
+              (m.depth or 0) > (m.lateral or 0))
+
+        # An unreliable fit must not be used: better to omit than to guess.
+        bad = calibrate(pairs, W, H)
+        if bad:
+            bad.reliable = False
+            m2 = measure(d1, d2, W, H, bad)
+            check("unreliable calibration yields no ground estimate",
+                  m2.ground_lengths is None)
+
+    # Without a calibration only the scale-free metric is available.
+    m3 = measure(a, b, W, H, None)
+    check("no calibration => no ground estimate", m3.ground_lengths is None)
+    check("body-lengths always available", abs(m3.body_lengths - 4.0) < 1e-6)
+
+    # Degenerate boxes must not raise or divide by zero.
+    flat = {"xc": 0.5, "yc": 0.5, "w": 0.1, "h": 0.0, "cls": 0}
+    check("zero-height box does not raise",
+          math.isfinite(body_lengths(flat, a, W, H)[0]))
+
+
 def test_sample_sorting() -> None:
     """The default order must surface the backlog, not finished work."""
     print("\n[sample sorting]")
@@ -796,6 +886,7 @@ def main() -> int:
     test_postprocess()
     test_adopt_prediction_flow()
     test_ingest_gating()
+    test_distance_metric()
     test_review_counts()
     test_sample_filters()
     test_sample_sorting()
