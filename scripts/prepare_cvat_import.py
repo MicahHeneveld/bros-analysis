@@ -1,31 +1,52 @@
+"""Prepare YOLO prediction labels for CVAT web import."""
+
 from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from paths_config import exports_dir, load_paths_config, local_root
+
 
 def parse_args() -> argparse.Namespace:
+    cfg = load_paths_config()
+    root = local_root(cfg)
+    if root is not None:
+        default_out = exports_dir(root, cfg) / "cvat_import_predictions"
+        default_zip = exports_dir(root, cfg) / "cvat_import_predictions.zip"
+        default_src = (
+            root
+            / cfg["runs_dirname"]
+            / "exports"
+            / "predictions"
+            / "labels"
+        )
+    else:
+        default_out = Path("cvat_import_predictions")
+        default_zip = Path("cvat_import_predictions.zip")
+        default_src = Path("runs/exports/predictions/labels")
+
     parser = argparse.ArgumentParser(
         description="Prepare YOLO prediction labels for CVAT import."
     )
     parser.add_argument(
         "src_labels",
         nargs="?",
-        default=(
-            "runs/detect/runs/ssbu_predictions/remaining_frames/labels"
-        ),
+        default=str(default_src),
         help="Folder containing YOLO .txt label files.",
     )
     parser.add_argument(
         "--out-dir",
-        default="cvat_import_predictions",
+        default=str(default_out),
         help="Output folder used to assemble the CVAT import package.",
     )
     parser.add_argument(
         "--zip-path",
-        default="cvat_import_predictions.zip",
+        default=str(default_zip),
         help="Path for the final zip archive.",
     )
     parser.add_argument(
@@ -93,6 +114,7 @@ def write_obj_data(out_dir: Path) -> None:
 
 
 def zip_directory(source_dir: Path, zip_path: Path) -> None:
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
     if zip_path.exists():
         zip_path.unlink()
 

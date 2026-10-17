@@ -1,0 +1,20 @@
+# Copy to configs/paths.yaml and set local_root to your Google Drive Desktop path.
+# configs/paths.yaml is gitignored.
+
+drive_folder_id: "12iT_dLsUOeFQ_UQBQsIWsnmD6ywvdPtl"
+drive_url: "https://drive.google.com/drive/folders/12iT_dLsUOeFQ_UQBQsIWsnmD6ywvdPtl"
+drive_folder_name: "bros-analysis"
+
+# After: shared folder → Organize → Add shortcut to My Drive,
+# Google Drive for desktop typically syncs to something like:
+#   ~/Library/CloudStorage/GoogleDrive-<email>/My Drive/bros-analysis
+local_root: "/Users/YOU/Library/CloudStorage/GoogleDrive-YOU/My Drive/bros-analysis"
+
+# Colab path after the same My Drive shortcut (used in the training notebook)
+colab_root: "/content/drive/MyDrive/bros-analysis"
+
+# Relative to local_root / colab_root
+dataset_dirname: "ssbu_players_colab"
+runs_dirname: "runs"
+frames_dirname: "frames"
+exports_dirname: "exports/cvat"

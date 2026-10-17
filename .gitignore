@@ -1,8 +1,25 @@
 .venv/
+.venv-train/
 __pycache__/
 *.pyc
+scripts/__pycache__/
+.DS_Store
 
 .repo_cleanup_backup/
+_audit_extract/
+_audit_extract_nb/
+.audit_docx_text.txt
+
+# Local Drive path config (keep example committed)
+configs/paths.yaml
+
+# Label review app: locally staged datasets and review state
+.staging/
+.review/
+
+# Disposable local mirrors / archives
+imported/
+*.zip
 
 data/raw_videos/
 data/frames/

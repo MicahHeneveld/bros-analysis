@@ -1,89 +1,44 @@
 # Bro's Analysis
 
-This repository currently contains a small SSBU player-detection project built around extracted match frames, YOLO-format labels, and Ultralytics training outputs. (navigation / setup instructions below)
+Super Smash Bros. Ultimate **player detection** toolkit: label in **CVAT (web)** or the
+local **label review app**, store data on a shared **Google Drive** folder, train in
+**Colab**.
 
-## Current Contents
+## Canonical data home (Drive)
 
-- [`extract_frames.py`](/c:/bros-analysis/extract_frames.py)
-  Extracts frames from a source video into image files.
-- [`requirements.txt`](/c:/bros-analysis/requirements.txt)
-  Python dependencies for the local environment.
-- [`yolo11n.pt`](/c:/bros-analysis/yolo11n.pt)
-  Downloaded Ultralytics base model checkpoint used for training.
-- [`data/`](/c:/bros-analysis/data)
-  Project data, including the SSBU detection dataset.
-- [`runs/`](/c:/bros-analysis/runs)
-  Saved Ultralytics training outputs.
+- **Folder:** [bros-analysis on Google Drive](https://drive.google.com/drive/folders/12iT_dLsUOeFQ_UQBQsIWsnmD6ywvdPtl?usp=sharing)
+- **Folder ID:** `12iT_dLsUOeFQ_UQBQsIWsnmD6ywvdPtl`
 
-## Dataset
+| On Drive | Purpose |
+|----------|---------|
+| `ssbu_players_colab/` | Active YOLO dataset (~3.8k images, class `player`) |
+| `runs/` | Training outputs and weights |
+| `frames/` | Extracted frames for new CVAT jobs (create if missing) |
+| `exports/cvat/` | CVAT import/export staging (create if missing) |
+| `session_backup_*` / `ssbu_players_colab.zip` | Archives — not the active source of truth |
 
-The active dataset lives in [`data/datasets/ssbu_players`](/c:/bros-analysis/data/datasets/ssbu_players).
+This git repo holds **scripts, docs, and the Colab notebook** only. Images and `.pt` weights stay on Drive.
 
-Current dataset counts:
+## One-time setup
 
-- `264` training images
-- `66` validation images
-- `264` training label files
-- `66` validation label files
-- `1` unlabeled image kept outside the training split
+### 1. Add Drive shortcut + Desktop sync
 
-Dataset config:
+1. Open the [shared folder](https://drive.google.com/drive/folders/12iT_dLsUOeFQ_UQBQsIWsnmD6ywvdPtl?usp=sharing).
+2. **Organize → Add shortcut to Drive** → place under **My Drive** (keep name `bros-analysis`).
+3. Install [Google Drive for desktop](https://www.google.com/drive/download/) and sync My Drive.
+4. Copy the example path config and set your synced path:
 
-- [`data/datasets/ssbu_players/data.yaml`](/c:/bros-analysis/data/datasets/ssbu_players/data.yaml)
-
-Dataset layout:
-
-- [`data/datasets/ssbu_players/images/train`](/c:/bros-analysis/data/datasets/ssbu_players/images/train)
-  Training images used by Ultralytics.
-- [`data/datasets/ssbu_players/images/val`](/c:/bros-analysis/data/datasets/ssbu_players/images/val)
-  Validation images used by Ultralytics.
-- [`data/datasets/ssbu_players/images/unassigned`](/c:/bros-analysis/data/datasets/ssbu_players/images/unassigned)
-  Images currently not included in train/val.
-- [`data/datasets/ssbu_players/labels/train`](/c:/bros-analysis/data/datasets/ssbu_players/labels/train)
-  YOLO label files for the training split.
-- [`data/datasets/ssbu_players/labels/val`](/c:/bros-analysis/data/datasets/ssbu_players/labels/val)
-  YOLO label files for the validation split.
-- [`data/datasets/ssbu_players/train.txt`](/c:/bros-analysis/data/datasets/ssbu_players/train.txt)
-  Legacy image list from an earlier dataset layout. It is still present in the repo, but the current dataset uses `data.yaml` with `images/train` and `images/val`.
-
-## Training Outputs
-
-Saved training runs live under [`runs/detect/runs/ssbu`](/c:/bros-analysis/runs/detect/runs/ssbu).
-
-Current run folders:
-
-- [`runs/detect/runs/ssbu/smash_player_test`](/c:/bros-analysis/runs/detect/runs/ssbu/smash_player_test)
-  One-epoch sanity-check training run.
-- [`runs/detect/runs/ssbu/smash_player_v1`](/c:/bros-analysis/runs/detect/runs/ssbu/smash_player_v1)
-  Main 30-epoch training run.
-
-Main trained weights:
-
-- [`runs/detect/runs/ssbu/smash_player_v1/weights/best.pt`](/c:/bros-analysis/runs/detect/runs/ssbu/smash_player_v1/weights/best.pt)
-- [`runs/detect/runs/ssbu/smash_player_v1/weights/last.pt`](/c:/bros-analysis/runs/detect/runs/ssbu/smash_player_v1/weights/last.pt)
-
-These run folders also contain Ultralytics-generated artifacts such as training curves, label plots, and validation result images.
-
-## Setup
-
-- **Prerequisites:** Python 3.10+ and `pip` installed.
-- **Create a virtual environment and install dependencies (Windows PowerShell):**
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+```bash
+cp configs/paths.example.yaml configs/paths.yaml
 ```
 
-- **Create a virtual environment and install dependencies (Windows cmd):**
+Edit `local_root` in `configs/paths.yaml` to the Desktop path, for example:
 
-```cmd
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
+```text
+/Users/<you>/Library/CloudStorage/GoogleDrive-<email>/My Drive/bros-analysis
 ```
 
-- **macOS / Linux:**
+### 2. Local Python env
 
 ```bash
 python3 -m venv .venv
@@ -91,75 +46,134 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-- **Quick verification:**
+### 3. Verify Drive layout
 
 ```bash
-python -c "import sys, torch; print('Python', sys.version.split()[0], 'torch', getattr(torch, '__version__', 'not installed'))"
+python scripts/check_drive_layout.py
 ```
 
-## Extracting Frames
+Creates `frames/` and `exports/cvat/` if missing and prints train/val counts.
 
-Use [`extract_frames.py`](/c:/bros-analysis/extract_frames.py) to extract local video frames for labeling or dataset assembly.
-
-- **Basic usage:**
-
-```powershell
-python extract_frames.py "data/raw_videos/YTMP3GG_YouTube_UAS-Finale-GRAND-FINALS-MkLeo-Pyra-Mythr_Media_hI9gPuGN07c_001_1080p.mp4"
-```
-
-This writes frames to:
+## Repo layout
 
 ```text
-data/frames/<video_stem>/
+app/
+  label_io.py                # YOLO parse/serialize, atomic writes, journal, backups
+  review_store.py            # review status, reasons, notes, progress
+  server.py                  # stdlib HTTP server: API + static + thumbnails
+  selftest.py                # 51 assertions, no test framework needed
+  static/                    # index.html, style.css, app.js (canvas editor)
+scripts/
+  extract_frames.py          # VOD → frames
+  prepare_cvat_import.py     # YOLO preds → CVAT zip
+  check_drive_layout.py      # Drive folder sanity check
+  paths_config.py            # shared path helpers
+  train_ssbu.py              # Colab/Drive training entrypoint
+  predict_ssbu.py            # trained checkpoint → raw predictions (Colab)
+  stage_dataset.py           # Drive dataset zip → local staging dir
+  sync_labels.py             # edited labels + review log → Drive
+notebooks/
+  train_ssbu_colab.ipynb     # one-click Colab launcher (mount + run train_ssbu.py)
+  predict_ssbu_colab.ipynb   # one-click Colab prediction run for the overlay
+configs/
+  paths.example.yaml         # committed template
+  paths.yaml                 # local (gitignored)
+docs/
+  label_review_app.md        # review/edit app usage, API, safety guarantees
+  prior_art.md               # survey + license map for anything borrowed
+  cvat_workflow.md           # full CVAT ↔ Drive ↔ Colab loop
+  colab_one_click.md         # how to run training in two cells
+data/datasets/ssbu_players/  # historical early labels only
 ```
 
-- **Choose a custom output directory:**
+## Everyday workflow
 
-```powershell
-python extract_frames.py "path/to/video.mp4" -o data/frames/myvideo
+1. **Extract frames:** `python scripts/extract_frames.py path/to/vod.mp4`
+2. **Label in CVAT (web)** — class `player`, export Ultralytics YOLO Detection 1.0
+3. **Merge** export into Drive `ssbu_players_colab/`
+4. **Train in Colab** — open `notebooks/train_ssbu_colab.ipynb`, **Runtime → Run all**
+5. **Review preds in CVAT** — `python scripts/prepare_cvat_import.py <labels_dir>`
+
+Details: [docs/cvat_workflow.md](docs/cvat_workflow.md) · [docs/colab_one_click.md](docs/colab_one_click.md)
+
+## Reviewing and fixing labels locally
+
+A local, zero-dependency browser app for reviewing labels and correcting boxes in place —
+no accounts, no uploads, no new Python packages.
+
+```bash
+source .venv/bin/activate
+python scripts/stage_dataset.py
+python app/server.py --dataset .staging/ssbu_players_colab
+# open http://localhost:8770
 ```
 
-- **Change the frame interval:**
+> Run from the repo root with the venv active. The system `python3` lacks `pyyaml`,
+> so `.venv/bin/python` (or an activated venv) is required.
 
-```powershell
-python extract_frames.py "path/to/video.mp4" -n 30
+Mark images good / bad (+ reason) / reviewed-empty, and move, resize, add, or delete boxes
+with autosave. Labels are written atomically with a recovery copy and an append-only edit
+journal, so every change is reversible. Imports are refused inside a synced Drive mount —
+stage locally first, then push only the changed `.txt` files back:
+
+```bash
+python scripts/sync_labels.py --dataset .staging/ssbu_players_colab --dry-run
+python scripts/sync_labels.py --dataset .staging/ssbu_players_colab --to-drive
 ```
 
-The script saves every `N`th frame as a `.jpg` file using this naming pattern:
+Full guide: [docs/label_review_app.md](docs/label_review_app.md) · safety patterns and
+licensing: [docs/prior_art.md](docs/prior_art.md). Run `python app/selftest.py` to verify
+the safety guarantees.
 
-```text
-<video_stem>_frame_000000.jpg
-<video_stem>_frame_000015.jpg
-<video_stem>_frame_000030.jpg
-...
+### Seeing where the model disagrees with your labels
+
+By default the app shows ground-truth labels for `train`/`val` — not model output. To
+see the model's boxes and have the strip ranked by worst disagreement, first run the
+checkpoint over a split in Colab, then point the app at the result:
+
+```bash
+# Colab: notebooks/predict_ssbu_colab.ipynb  (writes raw predictions to Drive)
+python app/server.py --dataset .staging/ssbu_players_colab \
+    --predictions "<drive>/exports/predictions/smash_player_colab_v2"
 ```
 
-- **Arguments:**
-  - `video`: input video path
-  - `-o`, `--outdir`: optional output directory
-  - `-n`, `--every`: save every Nth frame, default `15`
+Predictions draw as dashed orange boxes over your labels. Scores are recomputed against
+the labels currently on disk, so fixing a box updates its score immediately. Click a
+dashed box (or press `a`) to **adopt** a prediction you missed as a real label. Scoring
+rules: [docs/label_review_app.md](docs/label_review_app.md#prediction-overlay-and-disagreement-ranking).
 
-- **Example: run a short training command using Ultralytics (uses the included `yolo11n.pt`):**
+## Training
 
-```powershell
-yolo detect train \
-  model=yolo11n.pt \
-  data=data/datasets/ssbu_players/data.yaml \
-  epochs=30 \
-  imgsz=640 \
-  batch=4 \
-  workers=0 \
-  project=runs/ssbu \
-  name=smash_player_v1
+Two interchangeable paths. Both read `ssbu_players_colab/` and write to
+`runs/<name>/` on Drive, so a run made either way works for everyone else.
+
+### Colab (one-click)
+
+1. Sync `scripts/train_ssbu.py` onto Drive `bros-analysis/scripts/` (Drive Desktop does this if the file is copied there).
+2. Open `notebooks/train_ssbu_colab.ipynb` in Colab (upload or from Drive).
+3. **Runtime → GPU**, then **Runtime → Run all**.
+4. Weights land at Drive `runs/<RUN_NAME>/weights/best.pt`.
+
+Step-by-step: [docs/colab_one_click.md](docs/colab_one_click.md).
+
+### Local (Apple Silicon, terminal)
+
+No Colab or Google account needed. One-time ~2–3 GB install into a dedicated
+`.venv-train`, then:
+
+```bash
+.venv-train/bin/python scripts/train_ssbu.py \
+    --root .staging --dataset ssbu_players_colab \
+    --model models/yolo11n.pt --name smash_player_colab_v3 --epochs 50 --skip-install
 ```
 
+Weights land at `.staging/runs/<RUN_NAME>/weights/best.pt`; copy the run to Drive
+to share it. See [docs/local_training.md](docs/local_training.md) for setup,
+timings, prediction, and troubleshooting.
 
-## Navigation Guide
+> Either path: `--name` must be a run that does not exist yet. The script passes
+> `exist_ok=True` to Ultralytics, so reusing a name overwrites that run in place.
 
-If you want to understand the project quickly, these are the main places to look:
+## Project vision
 
-1. Start with [`extract_frames.py`](/c:/bros-analysis/extract_frames.py) to see how source video frames are produced.
-2. Open [`data/datasets/ssbu_players/data.yaml`](/c:/bros-analysis/data/datasets/ssbu_players/data.yaml) to see the active dataset definition.
-3. Browse [`data/datasets/ssbu_players/images/train`](/c:/bros-analysis/data/datasets/ssbu_players/images/train) and [`data/datasets/ssbu_players/labels/train`](/c:/bros-analysis/data/datasets/ssbu_players/labels/train) to inspect the training data directly.
-4. Check [`runs/detect/runs/ssbu/smash_player_v1`](/c:/bros-analysis/runs/detect/runs/ssbu/smash_player_v1) for the current trained model outputs.
-5. Use [`runs/detect/runs/ssbu/smash_player_v1/weights/best.pt`](/c:/bros-analysis/runs/detect/runs/ssbu/smash_player_v1/weights/best.pt) as the primary trained checkpoint currently stored in the repo workspace.
+See `Smash Bros Computer Vision Analytics Platform_Document.docx` for the MVP roadmap (Phase 1A detection → 1B events → analysis app). This repo pass is **pipeline/setup only**.
