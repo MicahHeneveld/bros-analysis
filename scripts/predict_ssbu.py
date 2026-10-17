@@ -23,6 +23,7 @@ Then point the local review app at it:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 import time
@@ -69,6 +70,10 @@ def parse_args() -> argparse.Namespace:
                          "SSBU is strictly 1v1 here." % MAX_BOXES))
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--batch", type=int, default=16)
+    p.add_argument("--chunk", type=int, default=64,
+                   help=("Infer this many images per call, releasing memory in "
+                         "between. Bounds peak RAM; the whole split in one call "
+                         "can reach tens of GB on Apple Silicon."))
     p.add_argument("--device", default=None,
                    help=("Compute device, e.g. 'mps' (Apple Silicon), 'cuda', 'cpu'. "
                          "Omit to let Ultralytics auto-select (which picks CPU on Mac)."))
@@ -98,6 +103,22 @@ def find_images(dataset_dir: Path, split: str) -> list[tuple[str, Path]]:
 
 def on_drive(path: Path) -> bool:
     return str(path).startswith("/content/drive")
+
+
+def _release_mps_cache() -> None:
+    """Drop cached MPS allocations after a chunk.
+
+    PyTorch's MPS allocator caches freed blocks for reuse, so a long run can
+    ratchet its footprint upward even though each batch is small. Releasing the
+    cache between chunks keeps the peak flat. No-op off MPS.
+    """
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    except Exception:
+        pass
 
 
 def main() -> int:
@@ -154,9 +175,43 @@ def main() -> int:
     total_boxes = 0
     kept_boxes = 0
     merged = 0
+
+    def write_result(fh, image_id: str, result) -> None:
+        """Append one image's predictions, updating the running counters."""
+        nonlocal written, total_boxes, kept_boxes, merged
+        h, w = result.orig_shape[:2]
+        boxes = []
+        xywhn = result.boxes.xywhn
+        confs = result.boxes.conf
+        clss = result.boxes.cls
+        for i in range(len(xywhn)):
+            xc, yc, bw, bh = (float(v) for v in xywhn[i].tolist())
+            boxes.append({
+                "cls": int(clss[i].item()),
+                "conf": round(float(confs[i].item()), 4),
+                "xc": round(xc, 6),
+                "yc": round(yc, 6),
+                "w": round(bw, 6),
+                "h": round(bh, 6),
+            })
+        total_boxes += len(boxes)
+        # Store BOTH raw and cleaned. The app re-derives the cleaned set from
+        # raw with the same shared function, so keeping raw means a later
+        # threshold change needs no re-run.
+        cleaned = postprocess(boxes, w, h, args.post_nms_iou, args.max_boxes)
+        kept_boxes += len(cleaned)
+        merged += len(boxes) - len(cleaned)
+        fh.write(json.dumps({
+            "image_id": image_id,
+            "width": int(w),
+            "height": int(h),
+            "predictions": boxes,
+            "predictions_clean": cleaned,
+        }) + "\n")
+        written += 1
+
     with open(out_path, "w", encoding="utf-8") as fh:
         predict_kwargs = dict(
-            source=[str(p) for _, p in pairs],
             conf=args.conf,
             iou=args.iou,
             imgsz=args.imgsz,
@@ -166,40 +221,29 @@ def main() -> int:
         )
         if args.device:
             predict_kwargs["device"] = args.device
-        results = model.predict(**predict_kwargs)
-        for (image_id, path), result in zip(pairs, results):
-            h, w = result.orig_shape[:2]
-            boxes = []
-            xywhn = result.boxes.xywhn
-            confs = result.boxes.conf
-            clss = result.boxes.cls
-            for i in range(len(xywhn)):
-                xc, yc, bw, bh = (float(v) for v in xywhn[i].tolist())
-                boxes.append({
-                    "cls": int(clss[i].item()),
-                    "conf": round(float(confs[i].item()), 4),
-                    "xc": round(xc, 6),
-                    "yc": round(yc, 6),
-                    "w": round(bw, 6),
-                    "h": round(bh, 6),
-                })
-            total_boxes += len(boxes)
-            # Store BOTH raw and cleaned. The app re-derives the cleaned set from
-            # raw with the same shared function, so keeping raw means a later
-            # threshold change needs no re-run.
-            cleaned = postprocess(boxes, w, h, args.post_nms_iou, args.max_boxes)
-            kept_boxes += len(cleaned)
-            merged += len(boxes) - len(cleaned)
-            fh.write(json.dumps({
-                "image_id": image_id,
-                "width": int(w),
-                "height": int(h),
-                "predictions": boxes,
-                "predictions_clean": cleaned,
-            }) + "\n")
-            written += 1
-            if written % 100 == 0:
-                print(f"  {written}/{len(pairs)}", flush=True)
+
+        # Infer in fixed-size chunks. Handing the whole split to model.predict
+        # at once lets Ultralytics hold state for every image: 3,857 frames
+        # reached a 23 GB physical footprint on a 24 GB machine, which is what
+        # kernel-panicked the host on the first attempt. Chunking bounds the
+        # peak and makes a large run survivable.
+        chunk = max(1, args.chunk)
+        for start in range(0, len(pairs), chunk):
+            window = pairs[start : start + chunk]
+            results = model.predict(
+                source=[str(p) for _, p in window], **predict_kwargs
+            )
+            for (image_id, _path), result in zip(window, results):
+                write_result(fh, image_id, result)
+                if written % 100 == 0:
+                    print(f"  {written}/{len(pairs)}", flush=True)
+            del results
+            gc.collect()
+            _release_mps_cache()
+            print(
+                f"  [{min(start + chunk, len(pairs))}/{len(pairs)}] chunk done",
+                flush=True,
+            )
 
     elapsed = time.time() - started
     summary = {
