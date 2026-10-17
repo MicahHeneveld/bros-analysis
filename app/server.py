@@ -52,6 +52,25 @@ class AppState:
         # against the labels currently on disk, so fixing a label immediately
         # changes that image's score instead of leaving a stale number.
         self.predictions = Predictions(predictions_path)
+        # A wrong --predictions path used to fail silently: the app came up
+        # looking normal but with the overlay and disagreement ranking simply
+        # absent, which reads as "the model found nothing" rather than "you
+        # pointed me at nothing". Say so at startup instead.
+        if predictions_path and not self.predictions.available:
+            shown = Path(predictions_path).expanduser()
+            print(f"WARNING: no predictions loaded from {shown}")
+            if not shown.exists():
+                print("         that path does not exist.")
+                parent = shown.parent
+                if parent.is_dir():
+                    near = sorted(p.name for p in parent.iterdir() if p.is_dir())
+                    if near:
+                        print(f"         available under {parent}:")
+                        for name in near[:10]:
+                            print(f"           {name}")
+            else:
+                print("         path exists but holds no readable *.jsonl.")
+            print("         The overlay and disagreement ranking will be disabled.\n")
         # Duplicate detections and >max_boxes per frame are corrected on read,
         # so the same stored predictions are scored and displayed consistently.
         self.nms_iou = nms_iou
