@@ -76,8 +76,15 @@ class AppState:
             return self._samples_cache
 
         rows: list[dict] = []
-        for split in ("train", "val", "test"):
-            img_dir = self.labels.images_dir / split
+        # Discover splits from disk rather than hardcoding train/val/test, so a
+        # freshly ingested video (which lands in its own split) is reviewable
+        # without a code change. Sorted for a stable queue order.
+        images_root = self.labels.images_dir
+        split_names = sorted(
+            d.name for d in images_root.iterdir() if d.is_dir()
+        ) if images_root.exists() else []
+        for split in split_names:
+            img_dir = images_root / split
             if not img_dir.exists():
                 continue
             for path in sorted(img_dir.iterdir()):

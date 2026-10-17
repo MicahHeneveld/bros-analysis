@@ -61,10 +61,11 @@ app/
   label_io.py                # YOLO parse/serialize, atomic writes, journal, backups
   review_store.py            # review status, reasons, notes, progress
   server.py                  # stdlib HTTP server: API + static + thumbnails
-  selftest.py                # 51 assertions, no test framework needed
+  selftest.py                # 181 assertions, no test framework needed
   static/                    # index.html, style.css, app.js (canvas editor)
 scripts/
-  extract_frames.py          # VOD → frames
+  ingest_video.py            # MP4 → gated frames + pre-labels, ready to review
+  extract_frames.py          # VOD → frames (raw, no gating)
   prepare_cvat_import.py     # YOLO preds → CVAT zip
   check_drive_layout.py      # Drive folder sanity check
   paths_config.py            # shared path helpers
@@ -85,6 +86,45 @@ docs/
   colab_one_click.md         # how to run training in two cells
 data/datasets/ssbu_players/  # historical early labels only
 ```
+
+## Pre-labelling a new video
+
+One command turns a `.mp4` into a reviewable, pre-labelled frame set. It samples
+at a fixed rate, drops menus/loading/results by asking the detector whether it
+can see both fighters, and collapses near-duplicate frames.
+
+```bash
+# 5 fps, gate to gameplay-only, labels left empty (model boxes shown as overlay)
+python scripts/ingest_video.py match.mp4
+
+# only one match segment, pre-filling the label files
+python scripts/ingest_video.py match.mp4 --start 120 --end 390 --fps 10 --seed-labels
+```
+
+Output lands in `.staging/ingested/<video>/` as a normal YOLO dataset:
+
+```
+images/<split>/<video>_frame_000123.jpg
+labels/<split>/<video>_frame_000123.txt
+predictions/<split>.jsonl     # the model's boxes
+frames.csv                    # image_id → source frame index and time
+manifest.json                 # source metadata + run stats
+```
+
+Then review it:
+
+```bash
+python app/server.py --dataset .staging/ingested/match \
+    --predictions .staging/ingested/match/predictions
+```
+
+Labels are **empty by default**: the model's boxes render as the overlay and
+pressing `a` in Both view adopts the ones you agree with. That keeps model
+guesses out of your ground truth. `--seed-labels` pre-fills them instead, which
+is faster for bulk review — but then you must review every frame before training,
+or the model learns to agree with itself.
+
+Details: [docs/video_ingest.md](docs/video_ingest.md)
 
 ## Everyday workflow
 

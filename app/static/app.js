@@ -434,12 +434,37 @@
   }
 
   // ---------------------------------------------------------- data loading
+  /**
+   * Populate the split dropdown from what is actually on disk.
+   *
+   * Hardcoding train/val/test meant an ingested video (which lands in its own
+   * split) was invisible in the filter. Counts come from the same /api/dataset
+   * payload the rest of the header uses, so the numbers always agree.
+   */
+  function renderSplitFilter(splits) {
+    const select = $('splitFilter');
+    const names = Object.keys(splits);
+    // Keep a choice the user already made, as long as it still exists.
+    const previous = select.value;
+    select.innerHTML = '<option value="all">All splits</option>';
+    for (const name of names) {
+      const n = splits[name].images;
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = `${name} (${n})`;
+      select.appendChild(opt);
+    }
+    const stillThere = names.includes(previous);
+    select.value = stillThere ? previous : 'all';
+  }
+
   async function loadDataset() {
     state.dataset = await api('/api/dataset');
     state.reasonCodes = state.dataset.reason_codes;
     $('datasetName').textContent = state.dataset.dataset;
     document.title = `SSBU Label Review — ${state.dataset.dataset}`;
     buildReasonChips();
+    renderSplitFilter(state.dataset.splits || {});
 
     const pred = state.dataset.predictions || {};
     state.predSummary = pred;

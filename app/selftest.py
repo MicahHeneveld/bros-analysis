@@ -530,6 +530,74 @@ def test_sample_filters() -> None:
                              split="val", kind="unfound_label"))
 
 
+def test_ingest_gating() -> None:
+    """The gameplay gate is what decides which frames reach the dataset.
+
+    It is pure logic over detection boxes, so it is worth pinning down: a
+    regression here silently either floods the review queue with menus or
+    throws away real gameplay.
+    """
+    print("\n[ingest gating]")
+    import argparse
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "ingest_video",
+        Path(__file__).resolve().parent.parent / "scripts" / "ingest_video.py",
+    )
+    ingest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ingest)
+
+    def args(**kw):
+        base = dict(player_conf=0.35, min_height=0.04, max_height=0.90, min_aspect=0.45)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    # A believable fighter: tall, confident, a sensible slice of the frame.
+    fighter = {"conf": 0.9, "xc": 0.3, "yc": 0.5, "w": 0.08, "h": 0.22}
+    # The detector firing twice on one character (same shape, high confidence).
+    second = {"conf": 0.8, "xc": 0.7, "yc": 0.5, "w": 0.08, "h": 0.22}
+
+    check("fighter passes the gate", ingest.is_plausible_player(fighter, 1080, 1920, args()))
+    check(
+        "two fighters count as two players",
+        ingest.count_players([fighter, second], 1080, 1920, args()) == 2,
+    )
+
+    low = dict(fighter, conf=0.20)
+    check("low-confidence box does not count", not ingest.is_plausible_player(low, 1080, 1920, args()))
+
+    tiny = dict(fighter, h=0.01)
+    check("sliver box rejected (UI element)", not ingest.is_plausible_player(tiny, 1080, 1920, args()))
+
+    huge = dict(fighter, h=0.95)
+    check("near-full-frame box rejected", not ingest.is_plausible_player(huge, 1080, 1920, args()))
+
+    squat = dict(fighter, w=0.40, h=0.10)
+    check("wide flat box rejected (a banner, not a fighter)", not ingest.is_plausible_player(squat, 1080, 1920, args()))
+
+    check(
+        "menu frame with no detections is gated out",
+        ingest.count_players([], 1080, 1920, args()) == 0,
+    )
+
+    # The no-op / empty distinction drives the process exit code.
+    check("run that saved frames exits 0", ingest.exit_code_for({"saved": 5, "already_present": 0}) == 0)
+    check(
+        "fully-present re-run exits 0 (not an error)",
+        ingest.exit_code_for({"saved": 0, "already_present": 9}) == 0,
+    )
+    check(
+        "run that kept nothing and had nothing exits 1",
+        ingest.exit_code_for({"saved": 0, "already_present": 0}) == 1,
+    )
+
+    check(
+        "dedupe signature of identical frames is zero",
+        float(ingest.thumbnail(__import__("numpy").zeros((100, 100, 3), dtype="uint8")).sum()) == 0.0,
+    )
+
+
 def test_sample_sorting() -> None:
     """The default order must surface the backlog, not finished work."""
     print("\n[sample sorting]")
@@ -727,6 +795,7 @@ def main() -> int:
     test_predictions_loader()
     test_postprocess()
     test_adopt_prediction_flow()
+    test_ingest_gating()
     test_review_counts()
     test_sample_filters()
     test_sample_sorting()
