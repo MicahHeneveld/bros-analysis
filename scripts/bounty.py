@@ -426,7 +426,11 @@ def cmd_create(args: argparse.Namespace) -> int:
         "",
         "**How to claim**",
         "",
-        f"Comment `claim` on this issue. Then run `python scripts/bounty.py start {args.issue_hint or '<number>'}`.",
+        "You need write access to this repo to comment (bounty issues are locked to",
+        "collaborators, because they attract scam replies). Ask the maintainer to add",
+        "you, then comment `claim` and run:",
+        "",
+        f"    python scripts/bounty.py start {args.issue_hint or '<number>'}",
         "",
         "**What to do**",
         "",
@@ -463,6 +467,17 @@ def cmd_create(args: argparse.Namespace) -> int:
     out = gh("issue", "create", "--title", title, "--body", body,
              "--label", LABEL_BOUNTY)
     print(f"Opened bounty: {out}")
+
+    # Public repos get scraped within minutes, and the bounty text is bait:
+    # scam comments quoted the point values back as USDC. Locking leaves
+    # commenting to repo collaborators, which is who is allowed to claim.
+    if not args.no_lock:
+        number = out.rstrip("/").rsplit("/", 1)[-1]
+        try:
+            gh("issue", "lock", number, "--reason", "spam")
+            print(f"Locked #{number} to collaborators.")
+        except subprocess.CalledProcessError:
+            print(f"Could not lock #{number}; lock it by hand to keep spam out.")
     return 0
 
 
@@ -518,7 +533,18 @@ def cmd_claim(args: argparse.Namespace) -> int:
         print("you can still work on it — but coordinate on the issue first, or pass --force.")
         return 1
     else:
-        gh("issue", "comment", str(args.issue), "--body", f"claim by @{me}")
+        try:
+            gh("issue", "comment", str(args.issue), "--body", f"claim by @{me}")
+        except subprocess.CalledProcessError:
+            # Bounty issues are locked to collaborators. A stranger gets a raw
+            # gh error, which reads like the tool is broken rather than like a
+            # permission they can ask for.
+            fail(
+                f"could not comment on #{args.issue} — bounty issues are locked to "
+                "repo collaborators.\n"
+                "Ask the maintainer to add you to the repo (write access), then "
+                "re-run this command. The claim itself is just a comment."
+            )
         print(f"Claimed #{args.issue}.")
 
     try:
@@ -725,6 +751,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--batch", type=int, default=1,
                    help="which of --count this invocation is (for resuming)")
     c.add_argument("--dry-run", action="store_true", help="print the issue body only")
+    c.add_argument("--no-lock", action="store_true",
+                   help="leave the issue open to comments from anyone (invites spam)")
     c.set_defaults(func=cmd_create)
 
     ls = sub.add_parser("list", help="list open bounties")

@@ -45,10 +45,19 @@ to be published, or regenerate frames with `scripts/ingest_video.py`.
 Bounties are GitHub Issues tagged `bounty`. Each one is a target — a dataset, a
 filter, and a number of frames — not a fixed range of frame IDs.
 
+**You need write access to the repo first.** Bounty issues are locked to
+collaborators, so commenting is restricted to people the maintainer has added.
+This is not gatekeeping for its own sake: the issues are public and get scraped
+by bots that reply with fake "rewards" quoting the bounty's point value. Ask the
+maintainer to add your GitHub account, then:
+
 ```bash
 python scripts/bounty.py list       # what is available, and what it is worth
 python scripts/bounty.py claim 12   # comments on the issue, creates bounty/12
 ```
+
+If `claim` fails with a permissions error, you are not on the repo yet — that is
+the one thing to sort out before anything else.
 
 > **Claims are advisory, not locks.** There is no server to hold a lease, so two
 > people *can* claim the same bounty. In practice this is harmless: the app sorts
@@ -192,6 +201,25 @@ done
 The body adapts to the dataset: if every label file is empty, the bounty is
 described as "label from scratch" rather than "review", because those are very
 different jobs.
+
+Bounties are created **locked** (`active_lock_reason: spam`), so only repo
+collaborators can comment and therefore claim. Public issues get scraped within
+minutes by bots offering fake rewards in the bounty's currency. Pass `--no-lock`
+if you deliberately want an open issue.
+
+### Moderation notes
+
+Two things bit us in the first hour of the board going public:
+
+- A bot posted 22 KB comments on several bounties that quoted the point totals as
+  "USDC rewards". They were deleted and the issues locked.
+- The board briefly counted any comment containing the substring `claim` as a
+  claim, so those spam comments made open bounties look taken. Claim detection now
+  matches the `claim by @user` marker only.
+
+If spam returns, `gh issue lock <n> --reason spam` and
+`gh api --method DELETE /repos/<owner>/<repo>/issues/comments/<id>` are the two
+repairs.
 
 Publishing the images a bounty depends on:
 
