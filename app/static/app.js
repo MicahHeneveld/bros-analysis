@@ -155,7 +155,7 @@
     videoFrames: {
       title: 'Why the boxes disappear',
       body: [
-        '<p>Frames are sampled (about 5 per second) and menus are dropped, so the timeline has holes. Boxes are drawn from the nearest kept frame and hidden once you are more than a sampling interval away.</p>',
+        '<p>Frames are sampled (about 5 per second) and every sampled frame is kept, so the timeline is continuous. Datasets ingested with the old menu filter, or with a low <code>--fps</code>, have holes instead. Boxes are drawn from the nearest kept frame and hidden once you are more than a sampling interval away.</p>',
         '<p>An empty overlay therefore means <em>the dataset has no frame here</em>\u2014not that the model found nothing. Clear <em>Follow sampled frames</em> to hold the nearest box instead.</p>',
       ].join(''),
     },
@@ -1763,11 +1763,12 @@
   // ------------------------------------------------------------ video mode
   //
   // Playback mode replays a source MP4 with the dataset's boxes drawn over it.
-  // The ingest samples at a target fps and drops menus, so the timeline is
-  // sparse: boxes are shown for the nearest kept frame and hidden when the
-  // playhead is further away than half a sampling interval. That makes the
-  // overlay honest - if the overlay is empty, the dataset really has no frame
-  // there, instead of quietly showing a stale box over a results screen.
+  // The ingest samples at a target fps and keeps every sample, but older
+  // datasets (or a low fps) leave gaps: boxes are shown for the nearest kept
+  // frame and hidden when the playhead is further away than half a sampling
+  // interval. That makes the overlay honest - if the overlay is empty, the
+  // dataset really has no frame there, instead of quietly showing a stale box
+  // over a results screen.
 
   const VIDEO = {
     loaded: false,

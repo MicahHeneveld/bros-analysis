@@ -27,8 +27,8 @@ import time
 import uuid
 from pathlib import Path
 
-# `  120 sampled -> 48 kept` from ingest_video.py's periodic progress line.
-PROGRESS_RE = re.compile(r"(\d+)\s+sampled\s+->\s+(\d+)\s+kept")
+# `  120 sampled -> 120 saved` from ingest_video.py's periodic progress line.
+PROGRESS_RE = re.compile(r"(\d+)\s+sampled\s+->\s+(\d+)\s+saved")
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -247,9 +247,9 @@ class JobRunner:
                     percent = min(99.0, 100.0 * sampled / expected) if expected else 0.0
                     job.set(
                         percent=percent,
-                        message=f"{sampled} frames sampled · {kept} kept",
+                        message=f"{sampled} frames sampled · {kept} saved",
                     )
-                elif line.startswith(("Video", "Sampling", "Device", "Gating")):
+                elif line.startswith(("Video", "Sampling", "Device", "Filters")):
                     job.set(message=line.strip())
 
             code = proc.wait()
