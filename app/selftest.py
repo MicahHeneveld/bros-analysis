@@ -1030,6 +1030,18 @@ def test_bounty_metadata() -> None:
     check("points round up on .001", bounty_mod.points_for(100, 1.001) == 101,
           str(bounty_mod.points_for(100, 1.001)))
 
+    # Only an actual claim counts. A long comment that merely uses the word
+    # "claim" must not make a bounty look taken — a 22KB spam comment did.
+    prose = "Some long spam body that says you can claim a reward here."
+    check("prose mentioning claim is not a claim",
+          not bounty_mod.CLAIM_RE.findall(prose))
+    check("real claim is detected",
+          bounty_mod.CLAIM_RE.findall("claim by @someone") == ["someone"])
+    check("claim marker is case tolerant",
+          bounty_mod.CLAIM_RE.findall("Claim by @Someone") == ["Someone"])
+    check("claim inside a paragraph is ignored",
+          not bounty_mod.CLAIM_RE.findall("thanks!\nclaim by @x was wrong\n"))
+
     tmp = Path(tempfile.mkdtemp(prefix="bounty-"))
     try:
         # A dataset with no non-empty labels is a bootstrap job, not a review

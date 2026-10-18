@@ -41,6 +41,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 META_RE = re.compile(r"<!--\s*bounty:\s*(\{.*?\})\s*-->", re.S)
+# A claim is exactly what `claim` posts: "claim by @user". Matching a bare
+# substring counted unrelated comments that merely used the word "claim"
+# (a 22KB spam comment did), which made untouched bounties look taken.
+CLAIM_RE = re.compile(r"^[ \t]*claim by @([A-Za-z0-9-]+)[ \t]*$", re.I | re.M)
 
 LABEL_BOUNTY = "bounty"
 LABEL_CLAIMED = "bounty:claimed"
@@ -481,8 +485,8 @@ def cmd_list(args: argparse.Namespace) -> int:
             continue
         pts = meta.get("points", 0)
         total += pts
-        claims = sum(1 for c in issue.get("comments", [])
-                     if "claim" in (c.get("body") or "").lower())
+        claims = sum(len(CLAIM_RE.findall(c.get("body") or ""))
+                     for c in issue.get("comments", []))
         state = " (claimed)" if claims else ""
         print(f"{issue['number']:>5}  {pts:>6}  {claims:>6}  {issue['title']}{state}")
     print("-" * 72)
@@ -505,10 +509,11 @@ def cmd_claim(args: argparse.Namespace) -> int:
     me = gh("api", "user", "--jq", ".login")
 
     existing = gh("issue", "view", str(args.issue), "--json", "comments",
-                  "--jq", "[.comments[].body] | join(\"\\n\")")
-    if f"claim by @{me}" in (existing or ""):
+                  "--jq", "[.comments[].body] | join(\"\\n\")") or ""
+    claimers = {name.lower() for name in CLAIM_RE.findall(existing)}
+    if me.lower() in claimers:
         print(f"You already claimed #{args.issue}.")
-    elif "claim by @" in (existing or "") and not args.force:
+    elif claimers and not args.force:
         print(f"#{args.issue} is already claimed by someone else. Claims are advisory, so")
         print("you can still work on it — but coordinate on the issue first, or pass --force.")
         return 1
