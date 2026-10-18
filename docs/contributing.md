@@ -5,10 +5,14 @@ Two ways in. Pick the one that matches how much of the pipeline you want to own.
 | | **Reviewer** | **Pipeline contributor** |
 | :--- | :--- | :--- |
 | You do | Judge frames, fix boxes | Ingest videos, train models, change the app |
-| You need | git, Docker | git, Python, ffmpeg, a GPU (for training) |
+| You need | git, `gh`, and Python 3 **or** Docker | git, `gh`, Python, ffmpeg, a GPU (for training) |
 | Time to first label | ~10 minutes | ~1 hour |
 | Where it runs | Your laptop | Your laptop |
 | What you commit | `.txt` label files | Label files **and** code |
+
+Install the tools from [the README quick start](../README.md#quick-start-for-contributors).
+Docker is **optional** for reviewers: the app is standard-library Python, so
+`python3 app/server.py` is equivalent to `docker compose up` if you have Python 3.9+.
 
 Everything is git-native: labels are plain YOLO `.txt` files in
 `data/datasets/<dataset>/labels/`, and your contribution is a pull request. There
@@ -25,7 +29,7 @@ repository.
 git clone https://github.com/MicahHeneveld/bros-analysis.git
 cd bros-analysis
 gh auth login                       # needed to claim bounties and open PRs
-python scripts/bounty.py doctor     # tells you exactly what is missing
+python3 scripts/bounty.py doctor     # tells you exactly what is missing
 ```
 
 `doctor` checks every dataset under `data/datasets/` and prints the one command
@@ -35,7 +39,7 @@ like this:
 
 ```
 [MISS] ultrank_11_20: no images (587 MB release available)
-       -> python scripts/bounty.py fetch --dataset data/datasets/ultrank_11_20
+       -> python3 scripts/bounty.py fetch --dataset data/datasets/ultrank_11_20
 ```
 
 Run that. Labels *are* in git, so no download is needed for them. If `doctor`
@@ -47,15 +51,21 @@ than regenerating frames yourself.
 Bounties are GitHub Issues tagged `bounty`. Each one is a target — a dataset, a
 filter, and a number of frames — not a fixed range of frame IDs.
 
-**You need write access to the repo first.** Bounty issues are locked to
-collaborators, so commenting is restricted to people the maintainer has added.
-This is not gatekeeping for its own sake: the issues are public and get scraped
-by bots that reply with fake "rewards" quoting the bounty's point value. Ask the
-maintainer to add your GitHub account, then:
+**You do not need write access, or any repository role at all.** Bounty issues are
+unlocked, so any signed-in GitHub account can comment. A small workflow
+(`.github/workflows/claim-guard.yml`) then decides whether a claim counts: it
+accepts accounts older than 30 days, accounts with a merged PR here, anyone on
+the repo, and anyone listed in `.github/CLAIMERS`. Brand-new accounts are treated
+as disposable and their claim comment is removed — that is what keeps the board
+spam-free without handing out push access.
+
+If a claim of yours disappears, your account is too new for the guard. Ask the
+maintainer to add your login to `.github/CLAIMERS` — one line, and your claims
+stick from then on.
 
 ```bash
-python scripts/bounty.py list       # what is available, and what it is worth
-python scripts/bounty.py claim 12   # comments on the issue, creates bounty/12
+python3 scripts/bounty.py list       # what is available, and what it is worth
+python3 scripts/bounty.py claim 12   # comments on the issue, creates bounty/12
 ```
 
 If `claim` fails with a permissions error, you are not on the repo yet — that is
@@ -69,11 +79,19 @@ the one thing to sort out before anything else.
 ### 3. Run the app
 
 ```bash
-python scripts/bounty.py start 12
+python3 scripts/bounty.py start 12
 ```
 
-That opens `http://127.0.0.1:8770` with the bounty's filter applied. Prefer a
-container?
+That opens `http://127.0.0.1:8770/review?dataset=…&bounty_id=…`, scoped to that
+bounty's frame slice. The slice is fixed: the strip shows all of that bounty's
+frames and nothing else, so refreshing never hands you a different queue.
+
+To browse a dataset without claiming anything, use the **View** button at the top
+of its card on the landing screen (`/`) — that opens `/view`, which is read-only
+and covers every frame plus the source video. Label mode always needs a bounty;
+the **Label** button on a bounty row is the only way in.
+
+Prefer a container?
 
 ```bash
 docker compose up
@@ -93,6 +111,11 @@ The first time you open the app it walks you through the interface. After that:
 | `p` | cycle Labels → Model → Both |
 | `j` / `k` | next / previous frame |
 
+`g` means "these boxes are right", so it needs at least one box. A frame with no
+players is `n` (Empty), not `g`. The app refuses to record `g` on an empty frame,
+and the server enforces the same rule, because a frame marked good with no labels
+is a frame that no bounty can be paid for.
+
 The rule of thumb: **make the green boxes correct.** Dashed amber boxes are the
 model's guesses; adopt the good ones, ignore the bad ones.
 
@@ -103,7 +126,7 @@ adopt, then fix anything the model got wrong. A tight, correct box beats a
 loose one; two players means exactly two boxes.
 
 If a bounty is on a dataset you have not downloaded yet, `doctor` will tell you.
-Get the images with `python scripts/bounty.py fetch` before you start.
+Get the images with `python3 scripts/bounty.py fetch` before you start.
 
 There is a **Review / Expert** switch in the top right. Review is all you need.
 Expert reveals filters, the disagreement score, the edit journal and exact box
@@ -112,12 +135,33 @@ coordinates.
 ### 5. Submit
 
 ```bash
-python scripts/bounty.py submit --push
+python3 scripts/bounty.py submit --push
 ```
 
 This commits only label files, pushes `bounty/12`, and opens a PR containing
 `Closes #12`. Points are awarded when the PR **merges**, so a re-run or a rebase
 cannot pay twice.
+
+If you claimed from the landing screen rather than the CLI, you will be sitting
+on `main` with no `bounty/12` branch — the browser cannot run `git checkout`.
+`submit` handles that: it creates `bounty/12` first, so your label edits are
+never committed to `main`.
+
+#### Or use the Submit button
+
+The landing screen's **Submit work** card opens the same flow. It lists every
+bounty with why it can or cannot ship:
+
+* **complete, claimed by you, has an issue** — submittable, ticked by default
+* **in progress** — excluded. A PR pays the whole bounty, so shipping half a
+  slice would either underpay you or land unfinished work on `main`.
+* **unclaimed** — excluded. A bounty's frames can reach 100% because *other
+  people* reviewed them, and a PR for that would credit nobody.
+* **claimed by someone else**, or **no GitHub issue** — excluded, with the reason.
+
+Each ticked bounty becomes its own branch and PR, and only that bounty's slice
+is staged — so submitting two in a row never sweeps someone else's
+half-finished labels into your PR.
 
 ---
 
@@ -225,17 +269,21 @@ The body adapts to the dataset: if every label file is empty, the bounty is
 described as "label from scratch" rather than "review", because those are very
 different jobs.
 
-Bounties are created **locked** (`active_lock_reason: spam`), so only repo
-collaborators can comment and therefore claim. Public issues get scraped within
-minutes by bots offering fake rewards in the bounty's currency. Pass `--no-lock`
-if you deliberately want an open issue.
+Bounties are created **unlocked**, because locking them would force every
+labeler to have write access just to claim. Spam is handled by
+`claim-guard.yml` instead: it deletes claim-shaped comments from accounts that
+are too new and have no merged PR here, and ordinary discussion is left alone.
+The guard does not police non-claim comments — GitHub's own spam filtering and a
+maintainer's delete button cover those. Pass `--lock` if you do want an issue
+locked (for example, a bounty that is being brigaded).
 
 ### Moderation notes
 
 Two things bit us in the first hour of the board going public:
 
 - A bot posted 22 KB comments on several bounties that quoted the point totals as
-  "USDC rewards". They were deleted and the issues locked.
+  "USDC rewards". They were deleted; at the time the issues were locked, which is
+  why claiming used to require write access.
 - The board briefly counted any comment containing the substring `claim` as a
   claim, so those spam comments made open bounties look taken. Claim detection now
   matches the `claim by @user` marker only.
@@ -243,6 +291,40 @@ Two things bit us in the first hour of the board going public:
 If spam returns, `gh issue lock <n> --reason spam` and
 `gh api --method DELETE /repos/<owner>/<repo>/issues/comments/<id>` are the two
 repairs.
+
+### What a role can and cannot do
+
+There are three trust levels, and the boundary is **data vs. code** — not
+labeler vs. model developer. Everyone who clones this repo runs `scripts/` and
+`app/` locally with their own GitHub token, so a merged script is code executed
+on a volunteer's machine. Model tooling, the review app, and automation all sit
+on the same side of that line.
+
+| Role | GitHub role | May merge |
+| :--- | :--- | :--- |
+| Contributor | none (forks) | label PRs, after CI says the diff is data-only |
+| Developer | write | code PRs, after a code owner approves |
+| Maintainer | admin | everything; bypasses the ruleset |
+
+Enforced by `.github/CODEOWNERS` (code paths need a code owner, label paths need
+nobody) and `.github/workflows/paths-guard.yml` (a PR from an account without
+write access may only touch `data/datasets/*/labels/**.txt`, and label files must
+be regular, non-executable, small text). Both are required because CODEOWNERS is
+skipped when no owned path is touched.
+
+`main` is protected by the "protect main" ruleset: PR required, force-push and
+deletion blocked, stale approvals dismissed. One follow-up is still outstanding:
+add `paths guard` as a **required status check** once it has reported on a real
+PR, so the check is selected by name rather than guessed.
+
+### Why labels can skip review
+
+A label file is four numbers per box. The cheapest attack on one is bad data,
+which the disagreement overlay and the next reviewer catch. A script is
+arbitrary code. `bounty.py submit` therefore stages only
+`data/datasets/*/labels/**`, and the guard rejects anything wider — including a
+symlink named `*.txt`, which would otherwise let a "label" write somewhere else
+entirely when the app saves it.
 
 Publishing the images a bounty depends on:
 

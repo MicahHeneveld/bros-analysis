@@ -35,6 +35,9 @@ runs/
 *.pt
 *.cache
 
+# Local, machine-specific pipeline helpers (hardcoded paths under .staging/)
+scripts/_v3_*.sh
+
 cvat_import_predictions
 cvat_import_predictions.zip
 cvat_import_predictions_yolo11/

@@ -18,6 +18,24 @@ python app/server.py --dataset .staging/ssbu_players_colab
 
 ![Label review app](images/label_review_app.jpg)
 
+## Two modes: label and view
+
+| URL | Mode | What it does |
+| :--- | :--- | :--- |
+| `/review?dataset=…&bounty_id=…` | **Label** | Writable. Scoped to one bounty's fixed slice; nothing outside it appears. Needs a bounty. |
+| `/view?dataset=…` | **View** | Read-only. Every frame in the dataset, plus the source video. No bounty needed. |
+
+`/review` without a `bounty_id` redirects to the landing screen, because labelling
+frames that no bounty is paying for is never what you meant to do. On the landing
+screen, **View** sits at the top of each dataset card and **Label** on each bounty
+row.
+
+**`g` requires at least one box.** A frame with no players is `n` (Empty). This is
+enforced by the API as well as the UI: a frame marked good with an empty label file
+is counted as reviewed but contributes nothing to training, so it is treated as a
+data error rather than a review. If such frames already exist, the app offers a
+**Reset to unreviewed** repair on load.
+
 ## Why it exists
 
 CVAT is web-first and paywalled, and streaming the dataset from Drive measured
