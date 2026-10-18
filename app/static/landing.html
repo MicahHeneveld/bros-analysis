@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>SSBU Label Review</title>
 <script src="/theme.js?v=1"></script>
-<link rel="stylesheet" href="/style.css?v=32" />
-<link rel="stylesheet" href="/landing.css?v=12" />
+<link rel="stylesheet" href="/style.css?v=33" />
+<link rel="stylesheet" href="/landing.css?v=13" />
 </head>
 <body class="landing-body">
 
@@ -21,6 +21,7 @@
   <span id="ghChip" class="gh-chip" title="GitHub connection">checking GitHub…</span>
   <button id="syncBtn" class="ghost" title="Pull bounties and claims from GitHub">Sync</button>
   <button id="refreshBtn" class="ghost" title="Rescan datasets">Refresh</button>
+  <button id="landingTourBtn" class="ghost tour-open" title="Show the tour of this screen">Tour</button>
   <span class="header-divider" aria-hidden="true"></span>
   <button type="button" id="themeToggle" class="theme-toggle" aria-pressed="true">
     <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -241,6 +242,40 @@
 
 <div id="toast" class="toast" hidden></div>
 
+<!-- ===================== first visit ===================== -->
+<div id="welcomeOverlay" class="overlay" hidden>
+  <div class="modal welcome-modal" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+    <h3 id="welcomeTitle">First time here?</h3>
+    <p class="muted welcome-blurb">
+      This is a bounty board. Datasets hold the frames; bounties are the slices
+      of work. Claim one, label its frames, and submit it as a pull request.
+      Want a quick tour of how to read the screen?
+    </p>
+    <div class="row modal-actions">
+      <span class="spacer"></span>
+      <button id="welcomeNo" class="ghost">No, I know my way</button>
+      <button id="welcomeYes" class="primary btn-lg">Yes, show me around</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== landing tour ===================== -->
+<div id="landingTour" class="tour-overlay" hidden>
+  <div id="landingSpot" class="tour-spot" aria-hidden="true"></div>
+  <div id="landingTourCard" class="tour-card" role="dialog" aria-modal="true"
+       aria-labelledby="landingTourTitle">
+    <span id="landingTourStep" class="tour-step"></span>
+    <h3 id="landingTourTitle"></h3>
+    <p id="landingTourBody" class="tour-body"></p>
+    <div class="row tour-actions">
+      <button id="landingTourSkip" class="ghost">Skip</button>
+      <span class="spacer"></span>
+      <button id="landingTourBack" class="ghost">Back</button>
+      <button id="landingTourNext" class="primary">Next</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===================== submit completed bounties ===================== -->
 <div id="submitOverlay" class="overlay" hidden>
   <div class="modal submit-modal" role="dialog" aria-modal="true" aria-labelledby="submitTitle">
@@ -265,6 +300,6 @@
   </div>
 </div>
 
-<script src="/landing.js?v=9"></script>
+<script src="/landing.js?v=13"></script>
 </body>
 </html>

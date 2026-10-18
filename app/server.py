@@ -362,6 +362,22 @@ class AppState:
         self._timeline_cache[cache_key] = payload
         return payload
 
+    def timeline_span(self, payload: dict, image_ids: set[str]) -> dict | None:
+        """The stretch of a video a bounty's frames cover.
+
+        A bounty slice is a set of image ids and the timeline is sorted by time,
+        so the span is just the first and last sampled second among the frames
+        this video actually holds. Returns None when none of them are here.
+        """
+        times = [
+            float(frame["t"])
+            for frame in payload.get("frames", [])
+            if isinstance(frame.get("t"), (int, float))
+            and (not image_ids or frame.get("image_id") in image_ids)
+        ]
+        if not times:
+            return None
+        return {"start": min(times), "end": max(times), "count": len(times)}
 
 
 def sort_samples(rows: list[dict], sort: str) -> list[dict]:
@@ -888,9 +904,29 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_error_json("unknown video", 404)
             if sub == "timeline":
                 try:
-                    return self.send_json(state.video_timeline(index))
+                    payload = state.video_timeline(index)
                 except ValueError as exc:
                     return self.send_error_json(str(exc), 404)
+                # Opening the player from a bounty asks for that slice's span so
+                # the scrubber can mark it and the player can stop at its end.
+                bounty_id = (query.get("bounty") or [""])[0].strip()
+                if bounty_id:
+                    bounty = next(
+                        (b for b in self.board.bounties() if b["id"] == bounty_id), None
+                    )
+                    if bounty is None:
+                        return self.send_error_json(f"unknown bounty: {bounty_id}", 404)
+                    span = state.timeline_span(payload, set(bounty.get("slice") or []))
+                    # Copy: the cached payload is shared by every bounty request.
+                    payload = {
+                        **payload,
+                        "bounty": {
+                            "id": bounty_id,
+                            "title": bounty.get("title", ""),
+                            **(span or {"count": 0}),
+                        },
+                    }
+                return self.send_json(payload)
             if sub == "":
                 return self.send_video(state.videos[index]["path"])
             return self.send_error_json("unknown video endpoint", 404)

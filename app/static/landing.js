@@ -25,6 +25,7 @@
     ghHint: '',
     ghRetries: 0,
     ghRetryTimer: null,
+    datasetSignature: '',   // structure of the last DOM build, see renderDatasets
   };
 
   const $ = (id) => document.getElementById(id);
@@ -100,19 +101,35 @@
     }));
   }
 
+  /** Move one bar to a new value without replaying the from-zero sweep. */
+  function setBar(el, percent) {
+    if (!el) return;
+    const value = String(pct(percent));
+    if (el.dataset.target === value) return;
+    el.dataset.target = value;
+    el.style.width = value + '%';
+  }
+
   function setRing(el, percent) {
     const r = Number(el.getAttribute('r')) || 100;
     const circumference = 2 * Math.PI * r;
     const value = pct(percent);
+    const offset = `${circumference * (1 - value / 100)}`;
     el.style.strokeDasharray = `${circumference}`;
-    // Start empty, then let the CSS transition fill the arc.
+    // Only the first paint grows the arc from empty. Afterwards the value moves
+    // from wherever it was: reselecting a bounty should not replay the sweep.
+    if (el.dataset.drawn === '1') {
+      el.style.strokeDashoffset = offset;
+      return;
+    }
     el.style.strokeDashoffset = `${circumference}`;
+    el.dataset.drawn = '1';
     if (reduceMotion) {
-      el.style.strokeDashoffset = `${circumference * (1 - value / 100)}`;
+      el.style.strokeDashoffset = offset;
       return;
     }
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      el.style.strokeDashoffset = `${circumference * (1 - value / 100)}`;
+      el.style.strokeDashoffset = offset;
     }));
   }
 
@@ -465,6 +482,84 @@
     }
   }
 
+  // Everything that decides the *shape* of the dataset list: which cards, which
+  // rows, which actions. Progress numbers are deliberately excluded, so
+  // selecting a bounty can repaint numbers without rebuilding the DOM - a
+  // rebuild would replay every card's entry animation and every bar's sweep.
+  function bountySignature(b) {
+    return [
+      b.id, b.status, b.points || 0, b.claimed_by || '',
+      !!(b.github_url), !!(b.pr_url || b.submitted_at),
+      !!(b.claim_pending_github),
+      // Bounty title and frame count can change if a bounty is re-seeded.
+      b.title, (b.progress && b.progress.total) || 0,
+    ].join('~');
+  }
+
+  function datasetSignature() {
+    return (state.board.datasets || []).map((ds) => {
+      const bounties = datasetBounties(ds.name);
+      const expand = ds.name === state.selectedDataset || bounties.length <= 3;
+      return [
+        ds.name, ds.kind, ds.images, ds.has_predictions ? 1 : 0,
+        expand ? 'open' : 'shut',
+        bounties.map(bountySignature).join('|'),
+      ].join('^');
+    }).join('::');
+  }
+
+  /** Repaint state that changed without touching the markup's structure. */
+  function syncDatasetDOM() {
+    const list = $('datasetList');
+    for (const ds of state.board.datasets || []) {
+      const card = [...list.children].find((el) => el.dataset.dataset === ds.name);
+      if (!card) continue;
+      const selected = ds.name === state.selectedDataset;
+      card.classList.toggle('selected', selected);
+
+      const pctEl = card.querySelector('.ds-pct');
+      if (pctEl) pctEl.textContent = `${ds.percent.toFixed(1)}%`;
+      const meta = card.querySelector('.ds-meta');
+      if (meta) {
+        meta.textContent = `${fmt(ds.images)} frames · ${fmt(ds.reviewed)} reviewed`
+          + (ds.has_predictions ? ' · model predictions' : '');
+      }
+      setBar(card.querySelector('.ds-progress .bar > div'), ds.percent);
+
+      const row = card.querySelector('.ds-progress-row');
+      if (row && row.children.length >= 2) {
+        row.children[0].textContent = `${fmt(ds.reviewed)} of ${fmt(ds.images)} reviewed`;
+        row.children[1].textContent = `${fmt(ds.unreviewed)} left`;
+      }
+      const hint = card.querySelector('.ds-hint');
+      if (hint && ds.images) {
+        hint.textContent = ds.unreviewed
+          ? `${fmt(ds.unreviewed)} frames waiting` : 'Fully reviewed';
+      }
+      const track = card.querySelector('[data-select]');
+      if (track) {
+        track.textContent = selected ? 'Tracking' : 'Track';
+        track.dataset.select = ds.name;
+      }
+
+      for (const b of datasetBounties(ds.name)) {
+        const el = [...card.querySelectorAll('.bounty')]
+          .find((node) => node.dataset.bounty === b.id);
+        if (!el) continue;
+        const p = b.progress || { done: 0, total: 0, percent: 0 };
+        el.classList.toggle('selected',
+          !!(state.selectedBounty && state.selectedBounty.id === b.id));
+        setBar(el.querySelector('.bounty-progress .bar > div'), p.percent);
+        const mini = el.querySelector('.bounty-progress .mini');
+        if (mini) mini.textContent = `${p.percent.toFixed(0)}%${p.estimated ? ' est.' : ''}`;
+        const frames = el.querySelector('.bounty-sub > span:not(.points-chip):not(.bounty-pending)');
+        if (frames) {
+          frames.textContent = `${p.estimated ? '≈' : ''}${fmt(p.done)}/${fmt(p.total)} frames`;
+        }
+      }
+    }
+  }
+
   function renderDatasets() {
     const list = $('datasetList');
     const datasets = state.board.datasets || [];
@@ -478,6 +573,22 @@
     $('emptyState').hidden = datasets.length > 0;
     list.hidden = datasets.length === 0;
     if (!datasets.length) { animateBars(); return; }
+
+    // Selecting a bounty changes numbers and one highlight, not the layout. When
+    // the structure is unchanged, patch it and leave the DOM (and its
+    // animations) alone.
+    const signature = datasetSignature();
+    if (signature === state.datasetSignature) {
+      syncDatasetDOM();
+      requestAnimationFrame(() => {
+        const ds = selectedDatasetInfo();
+        if (ds) setRing($('ringDataset'), ds.percent);
+      });
+      return;
+    }
+    // A second build means the entrance already played for these cards.
+    if (state.datasetSignature) list.classList.add('rendered');
+    state.datasetSignature = signature;
 
     list.innerHTML = datasets.map((ds, i) => {
       const bounties = datasetBounties(ds.name);
@@ -850,8 +961,8 @@
     });
     // Editing a finished bounty reopens the same fixed slice. The flag lets the
     // review screen say "editing" rather than "labelling" and warn when a PR
-    // already exists, because a second submit updates that PR rather than
-    // opening a new one.
+    // already exists - a submitted bounty is read-only, so nothing here may
+    // silently write to shipped labels.
     if (edit) {
       params.set('edit', '1');
       if (bounty.pr_url) params.set('pr', '1');
@@ -1043,6 +1154,192 @@
     state.jobTimer = setTimeout(tick, 600);
   }
 
+  // ---------------------------------------------------------------- tour
+  // The tour explains the screen, not the keyboard: what a dataset is, what a
+  // bounty pays for, and which control starts work. Targets are looked up at
+  // render time, so an empty board (or a collapsed card) degrades to a centred
+  // card rather than a spotlight on nothing.
+  const TOUR = { i: 0, open: false };
+
+  // Any row that is actually painted: cards in a closed <details> measure 0x0.
+  // Prefer a row that still has a Claim button so the "what is a bounty" and
+  // "claim it" steps point at the same piece of work.
+  function paintedRow() {
+    const rows = [...document.querySelectorAll('#datasetList .bounty')]
+      .filter((el) => el.getBoundingClientRect().height > 0);
+    return rows.find((el) => el.querySelector('[data-claim]')) || rows[0] || null;
+  }
+
+  function rowControl(selector) {
+    const row = paintedRow();
+    return row ? row.querySelector(selector) : null;
+  }
+
+  const LANDING_TOUR = [
+    {
+      title: 'This is the board',
+      body: 'Every <strong>dataset</strong> is one source video. Work on it is split into '
+        + '<strong>bounties</strong> — fixed slices of frames with a point value. '
+        + 'Claim one, label its frames, submit it as a pull request, get paid in points.',
+    },
+    {
+      target: () => document.querySelector('#datasetList .dataset-card'),
+      title: 'Datasets',
+      body: 'Each card is a video the model sampled, and the bar counts reviewed frames '
+        + 'across the whole dataset. <em>View</em> opens every frame plus the source video, '
+        + 'read-only, so you can check coverage before taking work.',
+    },
+    {
+      target: () => paintedRow(),
+      title: 'A bounty is the unit of work',
+      body: 'One bounty is a few hundred frames from one dataset — small enough to finish '
+        + 'in a session. The dot is its state (<em>open</em>, <em>claimed</em>, '
+        + '<em>complete</em>) and the bar is just that slice\u2019s progress.',
+    },
+    {
+      target: () => rowControl('[data-claim]'),
+      title: 'Claim before you label',
+      body: 'Claiming marks the bounty as yours here and posts it to the GitHub issue, '
+        + 'so nobody else starts the same slice. Changed your mind? Click the same button '
+        + 'to release it. A claim does not spend points — finishing does.',
+    },
+    {
+      target: () => rowControl('[data-label]'),
+      title: 'Label starts the work',
+      body: 'Label opens only that bounty\u2019s fixed set of frames, never a moving queue. '
+        + 'You judge frames good or bad and fix boxes; every change saves automatically. '
+        + 'A complete bounty keeps an <em>Edit</em> button so you can double-check it later.',
+    },
+    {
+      target: () => document.querySelector('#overviewPane .rings-card'),
+      title: 'Progress and points',
+      body: 'The rings track the dataset and the bounty you have selected. When a bounty '
+        + 'is complete, <em>Submit</em> turns it into a branch and a pull request. Points '
+        + 'land when that PR merges.',
+    },
+    {
+      target: () => document.querySelector('#addDatasetBtn'),
+      title: 'Have your own footage?',
+      body: 'Add dataset samples an MP4, has the model pre-label it, and opens bounties '
+        + 'you can label yourself or hand to other contributors.',
+    },
+  ];
+
+  function startLandingTour() {
+    TOUR.i = 0;
+    TOUR.open = true;
+    $('landingTour').hidden = false;
+    showTourStep();
+    requestAnimationFrame(() => $('landingTourNext').focus());
+  }
+
+  function endLandingTour() {
+    TOUR.open = false;
+    $('landingTour').hidden = true;
+    $('landingSpot').style.cssText = '';
+    // Return focus to the control that opens the tour, so keyboard users are
+    // not dropped back at the top of the document.
+    const opener = $('landingTourBtn');
+    if (opener) opener.focus();
+  }
+
+  function showTourStep() {
+    const step = LANDING_TOUR[TOUR.i];
+    const last = TOUR.i === LANDING_TOUR.length - 1;
+    $('landingTourStep').textContent = `Step ${TOUR.i + 1} of ${LANDING_TOUR.length}`;
+    $('landingTourTitle').textContent = step.title;
+    $('landingTourBody').innerHTML = step.body;
+    $('landingTourBack').disabled = TOUR.i === 0;
+    $('landingTourNext').textContent = last ? 'Got it' : 'Next';
+    $('landingTourSkip').hidden = last;
+
+    // Bring the target into view before measuring it. The overlay is fixed, so
+    // the scroll itself is hidden behind the dim. Measure immediately (the
+    // default scroll is synchronous) so the card never flashes at 0,0 while a
+    // background tab's rAF is throttled.
+    const target = step.target ? step.target() : null;
+    if (target) {
+      const r = target.getBoundingClientRect();
+      if (r.top < 12 || r.bottom > window.innerHeight - 12) {
+        target.scrollIntoView({ block: 'center' });
+      }
+    }
+    positionTour();
+    requestAnimationFrame(positionTour);
+  }
+
+  function positionTour() {
+    if (!TOUR.open) return;
+    const step = LANDING_TOUR[TOUR.i];
+    const target = step.target ? step.target() : null;
+    const spot = $('landingSpot');
+    const overlay = $('landingTour');
+    const card = $('landingTourCard');
+    if (!target) {
+      // No element to point at: dim uniformly instead of relying on a spotlight
+      // shadow that needs a box to cast from.
+      overlay.classList.add('no-target');
+      spot.style.cssText = 'display:none';
+      placeTourCard(null, 0);
+      return;
+    }
+    overlay.classList.remove('no-target');
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    // Clamp to the viewport, or a target flush against an edge leaves a sliver
+    // of the screen un-dimmed.
+    const left = Math.max(0, r.left - pad);
+    const top = Math.max(0, r.top - pad);
+    const width = Math.min(window.innerWidth - left, r.width + pad * 2);
+    const height = Math.min(window.innerHeight - top, r.height + pad * 2);
+    spot.style.cssText = [
+      'display:block',
+      `left:${left}px`,
+      `top:${top}px`,
+      `width:${width}px`,
+      `height:${height}px`,
+    ].join(';');
+    placeTourCard(r, pad);
+  }
+
+  function placeTourCard(rect, pad) {
+    const card = $('landingTourCard');
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    let left;
+    let top;
+    if (!rect) {
+      left = (window.innerWidth - w) / 2;
+      top = (window.innerHeight - h) / 2;
+    } else {
+      // Prefer the side with more room so the card never covers its target.
+      const roomBelow = window.innerHeight - (rect.bottom + pad + 12);
+      const roomAbove = rect.top - pad - 12;
+      left = Math.min(Math.max(10, rect.left), window.innerWidth - w - 10);
+      top = roomBelow > h || roomBelow >= roomAbove
+        ? rect.bottom + pad + 12
+        : rect.top - pad - 12 - h;
+      top = Math.min(Math.max(10, top), window.innerHeight - h - 10);
+    }
+    card.style.left = left + 'px';
+    card.style.top = top + 'px';
+  }
+
+  // The first-visit prompt is answered once; either answer is remembered, so a
+  // "not now" does not nag on every reload. The Tour button replays it anyway.
+  function maybeWelcome() {
+    let seen = false;
+    try { seen = localStorage.getItem('ssbu.landingWelcome') === '1'; } catch (_) { /* private */ }
+    if (seen) return;
+    $('welcomeOverlay').hidden = false;
+    requestAnimationFrame(() => $('welcomeYes').focus());
+  }
+
+  function closeWelcome() {
+    $('welcomeOverlay').hidden = true;
+    try { localStorage.setItem('ssbu.landingWelcome', '1'); } catch (_) { /* private */ }
+  }
+
   // ---------------------------------------------------------------- bind
   function bind() {
     $('refreshBtn').addEventListener('click', () => { loadBoard({ quiet: true }); toast('Rescanned datasets.'); });
@@ -1162,6 +1459,39 @@
       ev.target.dataset.auto = '0';
     });
     $('addStart').addEventListener('click', startIngest);
+
+    // First-visit prompt + tour.
+    $('welcomeYes').addEventListener('click', () => {
+      closeWelcome();
+      startLandingTour();
+    });
+    $('welcomeNo').addEventListener('click', closeWelcome);
+    $('welcomeOverlay').addEventListener('click', (ev) => {
+      if (ev.target === $('welcomeOverlay')) closeWelcome();
+    });
+    $('landingTourBtn').addEventListener('click', startLandingTour);
+    $('landingTourSkip').addEventListener('click', endLandingTour);
+    $('landingTourNext').addEventListener('click', () => {
+      if (TOUR.i >= LANDING_TOUR.length - 1) { endLandingTour(); return; }
+      TOUR.i += 1;
+      showTourStep();
+    });
+    $('landingTourBack').addEventListener('click', () => {
+      if (TOUR.i === 0) return;
+      TOUR.i -= 1;
+      showTourStep();
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (!$('welcomeOverlay').hidden && ev.key === 'Escape') { closeWelcome(); return; }
+      if (!TOUR.open) return;
+      if (ev.key === 'Escape') { endLandingTour(); return; }
+      if (ev.key === 'ArrowRight') { ev.preventDefault(); $('landingTourNext').click(); }
+      if (ev.key === 'ArrowLeft') { ev.preventDefault(); $('landingTourBack').click(); }
+    });
+    // The spotlight is measured in viewport space, so it has to follow a scroll
+    // or a resize rather than drift away from its target.
+    window.addEventListener('scroll', () => { if (TOUR.open) positionTour(); }, true);
+    window.addEventListener('resize', () => { if (TOUR.open) positionTour(); });
   }
 
   // ---------------------------------------------------------------- boot
@@ -1174,6 +1504,9 @@
       showJob(active);
       pollJob(active.id);
     }
+    // Ask after the board is on screen: the tour points at real cards, and the
+    // prompt should not sit behind an empty "Loading…" pane.
+    maybeWelcome();
   }
 
   boot();

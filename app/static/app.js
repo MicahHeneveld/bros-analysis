@@ -1780,6 +1780,8 @@
     active: null,       // nearest frame for the current playhead
     raf: null,
     seeking: false,
+    bounty: null,       // {start, end, count, title} for the open bounty
+    playTo: null,       // pause when the playhead reaches this second
   };
 
   async function loadVideos() {
@@ -1823,19 +1825,28 @@
     VIDEO.times = [];
     VIDEO.active = null;
     VIDEO.loaded = false;
+    VIDEO.bounty = null;
+    VIDEO.playTo = null;
+    renderVideoRange();
     $('videoFrameInfo').textContent = 'loading timeline…';
     $('videoEmpty').hidden = true;
     drawVideoOverlay();
 
     let data;
     try {
-      data = await api('/api/video/' + VIDEO.index + '/timeline');
+      // The bounty span scopes the scrubber and the play button; the timeline
+      // itself is unchanged, so a bounty id is optional.
+      const query = BOUNTY_ID ? '?bounty=' + encodeURIComponent(BOUNTY_ID) : '';
+      data = await api('/api/video/' + VIDEO.index + '/timeline' + query);
     } catch (err) {
       $('videoFrameInfo').textContent = 'timeline failed: ' + err.message;
       return;
     }
     VIDEO.frames = (data.frames || []).filter((f) => typeof f.t === 'number');
     VIDEO.times = VIDEO.frames.map((f) => f.t);
+    const span = data.bounty;
+    VIDEO.bounty = span && typeof span.start === 'number'
+      && typeof span.end === 'number' && span.end >= span.start ? span : null;
     VIDEO.loaded = true;
     // Half the typical gap is the natural cut-off: any further and the box
     // belongs to a meaningfully different moment than what is on screen.
@@ -1856,7 +1867,60 @@
     $('videoInfo').textContent = bits.join(' · ');
     $('videoFrameInfo').textContent = '';
     updateVideoClock();
+    renderVideoRange();
+    // Open on the bounty's first frame, not the start of the set: the whole
+    // match is usually tens of minutes, and 0:00 is never the useful moment.
+    if (VIDEO.bounty && (el.currentTime || 0) < 1) {
+      try { el.currentTime = VIDEO.bounty.start + 0.001; } catch (_) { /* no metadata yet */ }
+      updateVideoClock();
+    }
     drawVideoOverlay();
+  }
+
+  // ------------------------------------------------- bounty interval
+  // The player is opened from a bounty, so its slice of the source video is
+  // knowable: the first and last sampled second among its frames. Marking that
+  // stretch is the difference between "watch 40 minutes of a tournament set"
+  // and "watch the two minutes I am paid for".
+  function videoDuration() {
+    const el = $('videoEl');
+    if (isFinite(el.duration) && el.duration > 0) return el.duration;
+    const meta = VIDEO.videos[VIDEO.index] || {};
+    return Number(meta.duration) || 0;
+  }
+
+  function renderVideoRange() {
+    const ribbon = $('videoRibbon');
+    const fill = $('videoRibbonFill');
+    const badge = $('videoBountyText');
+    const btn = $('videoBountyPlay');
+    const b = VIDEO.bounty;
+    const dur = videoDuration();
+    if (!b || !(dur > 0) || !(b.end >= b.start) || !b.count) {
+      ribbon.hidden = true;
+      badge.hidden = true;
+      btn.hidden = true;
+      return;
+    }
+    ribbon.hidden = false;
+    badge.hidden = false;
+    btn.hidden = false;
+    const start = Math.max(0, Math.min(b.start, dur));
+    const end = Math.max(start, Math.min(b.end + 0.001, dur));
+    fill.style.left = (start / dur) * 100 + '%';
+    fill.style.width = Math.max(0.5, ((end - start) / dur) * 100) + '%';
+    badge.textContent = `bounty · ${fmtDuration(b.start)}–${fmtDuration(b.end)}`
+      + ` · ${Number(b.count).toLocaleString('en-US')} frames`;
+    badge.title = b.title || 'The frames this bounty covers';
+  }
+
+  /** Play only the bounty's stretch: seek to its first frame, stop after its last. */
+  function playBountyRange() {
+    const b = VIDEO.bounty;
+    if (!b) return;
+    // A hair of tail so the final frame is actually on screen when it stops.
+    VIDEO.playTo = b.end + 0.15;
+    seekVideoTo(b.start + 0.001, true);
   }
 
   function fmtDuration(sec) {
@@ -1986,6 +2050,13 @@
     updateVideoClock();
     drawVideoOverlay();
     const v = $('videoEl');
+    // "Start from bounty" is a bounded play: stop at the slice's last frame
+    // instead of running into the next game of the set.
+    if (VIDEO.playTo != null && v.currentTime >= VIDEO.playTo) {
+      VIDEO.playTo = null;
+      v.pause();
+      return;
+    }
     if (!v.paused && !v.ended) {
       VIDEO.raf = requestAnimationFrame(videoTick);
     } else {
@@ -2010,6 +2081,7 @@
 
   function stepVideoFrame(delta) {
     if (!VIDEO.times.length) return;
+    VIDEO.playTo = null;
     const v = $('videoEl');
     const i = nearestFrameIndex(v.currentTime || 0);
     const base = delta > 0 && VIDEO.times[i] < (v.currentTime || 0) - 1e-3 ? i + 1 : i;
@@ -2075,6 +2147,7 @@
     });
     v.addEventListener('loadedmetadata', () => {
       updateVideoClock();
+      renderVideoRange();
       drawVideoOverlay();
     });
     v.addEventListener('seeked', () => {
@@ -2082,15 +2155,29 @@
       updateVideoClock();
       drawVideoOverlay();
     });
-    v.addEventListener('timeupdate', updateVideoClock);
-    v.addEventListener('ended', () => { $('videoPlay').textContent = 'Play'; });
+    // rAF stops when the tab is hidden, so the bound is enforced here too.
+    v.addEventListener('timeupdate', () => {
+      if (VIDEO.playTo != null && v.currentTime >= VIDEO.playTo) {
+        VIDEO.playTo = null;
+        v.pause();
+      }
+      updateVideoClock();
+    });
+    v.addEventListener('ended', () => {
+      VIDEO.playTo = null;
+      $('videoPlay').textContent = 'Play';
+    });
 
     $('videoPlay').addEventListener('click', toggleVideoPlay);
+    $('videoBountyPlay').addEventListener('click', playBountyRange);
     $('videoPrev').addEventListener('click', () => stepVideoFrame(-1));
     $('videoNext').addEventListener('click', () => stepVideoFrame(1));
     $('videoFollowFrame').addEventListener('change', drawVideoOverlay);
     const seek = $('videoSeek');
     seek.addEventListener('input', () => {
+      // Hand-steering the playhead cancels a bounded play: nothing is more
+      // annoying than pausing because you scrubbed past the old end.
+      VIDEO.playTo = null;
       VIDEO.seeking = true;
       const dur = isFinite(v.duration) ? v.duration : 0;
       if (dur > 0) v.currentTime = (Number(seek.value) / 1000) * dur;
@@ -2098,6 +2185,16 @@
       drawVideoOverlay();
     });
     seek.addEventListener('change', () => { VIDEO.seeking = false; });
+    // The ribbon is a shortcut into the bounty's stretch, not a second slider.
+    $('videoRibbon').addEventListener('click', (ev) => {
+      const b = VIDEO.bounty;
+      const dur = videoDuration();
+      if (!b || !(dur > 0)) return;
+      const rect = ev.currentTarget.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      VIDEO.playTo = null;
+      seekVideoTo(ratio * dur);
+    });
     window.addEventListener('resize', () => {
       if (state.appMode === 'video') drawVideoOverlay();
     });

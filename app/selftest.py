@@ -1043,6 +1043,16 @@ def test_video_mode() -> None:
         check("timeline carries model boxes", len(frames[0]["model"]) == 1)
         check("labels expose cls", frames[0]["labels"][0]["cls"] == 0)
 
+        span = state.timeline_span(tl, {"clip/frame_000001", "clip/frame_000002"})
+        check("bounty span starts at its first frame", span["start"] == 2.0, str(span))
+        check("bounty span ends at its last frame", span["end"] == 4.0, str(span))
+        check("bounty span counts only its frames", span["count"] == 2, str(span))
+        check(
+            "a frame outside the video has no span",
+            state.timeline_span(tl, {"other/frame_000009"}) is None,
+        )
+        check("an empty slice covers everything", state.timeline_span(tl, set())["count"] == 3)
+
         bad = False
         try:
             state.video_timeline(99)

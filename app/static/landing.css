@@ -149,6 +149,10 @@ body.landing-body {
   animation-delay: var(--delay, 0ms);
   transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
+/* The entrance is for the first paint only. A rebuild later (a claim, a dataset
+   switch) should not slide every card in again. */
+.dataset-list.rendered .dataset-card,
+.dataset-list.rendered .bounty { animation: none; }
 .dataset-card:hover { border-color: var(--line-strong); }
 .dataset-card.selected {
   border-color: var(--line-strong);
@@ -683,6 +687,15 @@ button.edit-btn:hover:not(:disabled) {
 .check { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; }
 .modal-actions { margin-top: 16px; }
 .err { color: var(--bad-fg); max-width: 55%; }
+
+/* ------------------------------------------------------ first visit */
+.welcome-modal { width: min(430px, calc(100vw - 32px)); }
+.welcome-blurb { font-size: 12.5px; line-height: 1.6; margin: 8px 0 0; }
+/* The landing tour reuses the review tour's spotlight and card, so only the
+   bits specific to this screen live here. */
+#landingTour { z-index: 70; }
+#landingTour .tour-card { max-height: calc(100vh - 24px); overflow: auto; }
+#landingTour .tour-actions { flex-wrap: wrap; }
 
 /* ------------------------------------------------------------ toast */
 .toast {

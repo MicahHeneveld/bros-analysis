@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>SSBU Label Review</title>
 <script src="/theme.js?v=1"></script>
-<link rel="stylesheet" href="/style.css?v=32" />
+<link rel="stylesheet" href="/style.css?v=33" />
 </head>
 <body class="role-review">
 
@@ -242,6 +242,7 @@
   <div id="videoTop">
     <select id="videoSelect" title="Which source video to play"></select>
     <span id="videoInfo" class="muted"></span>
+    <span id="videoBountyText" class="bounty-span" hidden></span>
     <span class="spacer"></span>
     <span class="seg-label">Show</span>
     <span id="videoViewToggle" class="segmented" role="group" aria-label="Which boxes to show">
@@ -262,8 +263,16 @@
 
   <div id="videoControls">
     <button id="videoPlay" class="ghost" title="Play / pause (space)">Play</button>
-    <input id="videoSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+    <div id="videoScrub">
+      <input id="videoSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+      <div id="videoRibbon" class="video-ribbon" hidden
+           title="The part of the video this bounty covers — click to jump">
+        <span id="videoRibbonFill"></span>
+      </div>
+    </div>
     <span id="videoTime" class="muted">0:00 / 0:00</span>
+    <button id="videoBountyPlay" class="ghost" hidden
+            title="Jump to this bounty's first frame and stop after its last">▶ Start from bounty</button>
     <button id="videoPrev" class="ghost" title="Previous sampled frame (←)">‹ frame</button>
     <button id="videoNext" class="ghost" title="Next sampled frame (→)">frame ›</button>
     <span id="videoFrameInfo" class="muted"></span>
@@ -328,6 +337,6 @@
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="/app.js?v=25"></script>
+<script src="/app.js?v=27"></script>
 </body>
 </html>

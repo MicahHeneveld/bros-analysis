@@ -796,8 +796,41 @@ kbd {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
-#videoSeek { flex: 1; accent-color: var(--accent); }
+#videoScrub { flex: 1; min-width: 140px; display: flex; flex-direction: column; gap: 4px; }
+#videoScrub > input { width: 100%; }
+#videoSeek { accent-color: var(--accent); }
+/* The bounty's stretch of the source video. Sits under the scrubber rather than
+   on top of it, so the thumb and the native track stay usable. */
+.video-ribbon {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-3);
+  overflow: hidden;
+  cursor: pointer;
+}
+#videoRibbonFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  transition: left .18s ease, width .18s ease;
+}
+.bounty-span {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent-text);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 #videoTime { font-variant-numeric: tabular-nums; min-width: 92px; }
 #videoFrameInfo { font-variant-numeric: tabular-nums; min-width: 200px; text-align: right; }
 
