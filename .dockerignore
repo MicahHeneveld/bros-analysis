@@ -1,0 +1,22 @@
+# Keep the image tiny and build context small. Datasets and media are mounted
+# at run time, never baked in.
+.git
+.github
+.venv
+.venv-train
+__pycache__
+*.pyc
+.staging
+data
+imported
+runs
+models
+notebooks
+_audit_extract
+_audit_extract_nb
+*.zip
+*.mp4
+*.mkv
+*.webm
+*.pt
+docs

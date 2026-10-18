@@ -169,12 +169,30 @@ Details: [docs/cvat_workflow.md](docs/cvat_workflow.md) · [docs/colab_one_click
 A local, zero-dependency browser app for reviewing labels and correcting boxes in place —
 no accounts, no uploads, no new Python packages.
 
+**Contributing a review?** Start with [docs/contributing.md](docs/contributing.md) — it
+covers claiming a bounty, running the app in Docker, and submitting labels as a PR.
+
 ```bash
 source .venv/bin/activate
 python scripts/stage_dataset.py
 python app/server.py --dataset .staging/ssbu_players_colab
 # open http://localhost:8770
 ```
+
+Or in a container, with no local Python setup at all:
+
+```bash
+docker compose up        # http://127.0.0.1:8770
+```
+
+The interface has two detail levels, switched in the top right:
+
+- **Review** — judge frames, fix boxes, adopt the model's suggestions. Nothing else.
+- **Expert** — filters, the disagreement score, the edit journal and exact box
+  coordinates.
+
+Every block carries a `?` button that explains it in context, and a first-run walkthrough
+appears when you open the app from a bounty link.
 
 > Run from the repo root with the venv active. The system `python3` lacks `pyyaml`,
 > so `.venv/bin/python` (or an activated venv) is required.

@@ -1,0 +1,7 @@
+path: .
+train: images/ultrank_11_20
+val: images/ultrank_11_20
+
+nc: 1
+names:
+  0: player

@@ -283,6 +283,27 @@ def boxes_from_result(result) -> tuple[list[dict], int, int]:
     return boxes, int(w), int(h)
 
 
+def slugify(text: str, max_length: int = 60) -> str:
+    """A filename-safe, URL-safe slug for a video title.
+
+    Video stems routinely contain spaces, '#', '(' and ')'. '#'' terminates a
+    URL fragment, so an unencoded id silently resolves to nothing, and spaces
+    are fragile in shell usage. Keeping generated names to [A-Za-z0-9_-] avoids
+    the whole class of problem at the source rather than relying on every
+    consumer to encode correctly.
+    """
+    out = []
+    for ch in text:
+        if ch.isalnum() or ch in "-_":
+            out.append(ch)
+        elif ch in " .#(),[]&+":
+            out.append("_")
+    slug = "".join(out).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug[:max_length].strip("_") or "video"
+
+
 def label_line(box: dict) -> str:
     return (
         f"{int(box['cls'])} {float(box['xc']):.6f} {float(box['yc']):.6f} "
@@ -333,8 +354,9 @@ def main() -> int:
         print(f"ERROR: {exc}")
         return 2
 
-    dataset = (args.out.expanduser() if args.out else DEFAULT_OUT_ROOT / video.stem)
-    split = args.split or video.stem
+    stem_slug = slugify(video.stem)
+    dataset = (args.out.expanduser() if args.out else DEFAULT_OUT_ROOT / stem_slug)
+    split = args.split or stem_slug
     images_dir = dataset / "images" / split
     labels_dir = dataset / "labels" / split
     pred_dir = dataset / "predictions"
@@ -431,7 +453,7 @@ def main() -> int:
                     stats["gated_out"] += 1
                     continue
 
-            name = f"{video.stem}_frame_{frame_idx:06d}"
+            name = f"{stem_slug}_frame_{frame_idx:06d}"
             image_id = f"{split}/{name}"
             image_path = images_dir / f"{name}.jpg"
             if image_path.exists() and not args.force:

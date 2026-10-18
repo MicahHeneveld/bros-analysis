@@ -23,7 +23,8 @@ imported/
 
 data/raw_videos/
 data/frames/
-data/datasets/ssbu_players/images/
+# Large image sets are always published as release assets, never committed.
+data/datasets/*/images/
 
 # Source videos are large; keep them out of history
 *.mp4

@@ -1,0 +1,154 @@
+name: bounty points
+
+# Points are awarded from git history rather than a running scoreboard, so there
+# is no service to host and nothing to game by clicking buttons. A contributor's
+# score is the sum of the bounties whose PRs were actually merged.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  award:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Find the bounty this PR closes
+        id: bounty
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          echo "$PR_BODY" > /tmp/pr-body.md
+          python - <<'PY'
+          import json, os, re, subprocess, pathlib
+
+          body = pathlib.Path('/tmp/pr-body.md').read_text()
+          m = re.search(r'Closes #(\d+)', body, re.I)
+          if not m:
+              print('No "Closes #N" in the PR body; nothing to award.')
+              pathlib.Path('/tmp/award.json').write_text('{}')
+              raise SystemExit(0)
+
+          number = m.group(1)
+          raw = subprocess.run(
+              ['gh', 'issue', 'view', number, '--json', 'body,title'],
+              capture_output=True, text=True, check=True).stdout
+          issue = json.loads(raw)
+          meta_m = re.search(r'<!--\s*bounty:\s*(\{.*?\})\s*-->', issue['body'], re.S)
+          if not meta_m:
+              print(f'Issue #{number} has no bounty metadata.')
+              pathlib.Path('/tmp/award.json').write_text('{}')
+              raise SystemExit(0)
+
+          meta = json.loads(meta_m.group(1))
+          award = {
+              'issue': int(number),
+              'points': int(meta.get('points', 0)),
+              'target': int(meta.get('target', 0)),
+              'difficulty': float(meta.get('difficulty', 1.0)),
+          }
+          pathlib.Path('/tmp/award.json').write_text(json.dumps(award))
+          print(f'Bounty #{number}: {award["points"]} points')
+          PY
+
+      - name: Record the award
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib, time
+
+          award = json.loads(pathlib.Path('/tmp/award.json').read_text())
+          if not award:
+              raise SystemExit(0)
+
+          ledger = pathlib.Path('docs/leaderboard.json')
+          data = {'generated': '', 'totals': {}, 'prs': []}
+          if ledger.exists():
+              try:
+                  data = json.loads(ledger.read_text())
+              except json.JSONDecodeError:
+                  pass
+
+          author = os.environ['AUTHOR']
+          # Idempotent: a re-run or a rebase must not pay twice.
+          seen = {(p.get('pr'), p.get('issue')) for p in data.get('prs', [])}
+          key = (int(os.environ['PR']), award['issue'])
+          if key in seen:
+              print('Already recorded; skipping.')
+              raise SystemExit(0)
+
+          data.setdefault('prs', []).append({
+              'pr': int(os.environ['PR']),
+              'issue': award['issue'],
+              'author': author,
+              'points': award['points'],
+              'mergedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+          })
+          totals = {}
+          for entry in data['prs']:
+              totals[entry['author']] = totals.get(entry['author'], 0) + entry.get('points', 0)
+          data['totals'] = dict(sorted(totals.items(), key=lambda kv: -kv[1]))
+          data['generated'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+          ledger.write_text(json.dumps(data, indent=2) + '\n')
+
+          docs = pathlib.Path('docs/LEADERBOARD.md')
+          lines = ['# Bounty leaderboard', '',
+                   f'_Updated {data["generated"]}_', '',
+                   '| Points | Contributor |', '| ---: | :--- |']
+          for who, pts in data['totals'].items():
+              lines.append(f'| {pts} | @{who} |')
+          lines += ['', 'Points are awarded when a bounty PR merges, not when it is opened.', '']
+          docs.write_text('\n'.join(lines))
+          print(f'Recorded {award["points"]} points for @{author}')
+          PY
+
+      - name: Commit the ledger
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/leaderboard.json docs/LEADERBOARD.md; then
+            echo "Ledger unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/leaderboard.json docs/LEADERBOARD.md
+          git commit -m "chore: award bounty points for #${{ github.event.pull_request.number }}"
+          git push
+
+      - name: Mark the bounty done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib, subprocess
+
+          award = json.loads(pathlib.Path('/tmp/award.json').read_text())
+          if not award:
+              raise SystemExit(0)
+          # The PR body's "Closes #N" already closes the issue on merge; this
+          # only adds the label so the board can filter finished bounties out.
+          subprocess.run(
+              ['gh', 'issue', 'edit', str(award['issue']), '--add-label', 'bounty:done'],
+              check=False,
+          )
+          PY

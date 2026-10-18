@@ -41,17 +41,293 @@
     // happen). The counts live on the toggle in the stage footer.
     viewMode: 'both',
     predSummary: null,
+    // Top-level mode: 'images' reviews the dataset frame by frame, 'video'
+    // plays the source MP4 with the same boxes overlaid.
+    appMode: 'images',
+    // Interface detail level. 'review' is the contributor view: judge frames,
+    // fix boxes, nothing else. 'expert' reveals filters, metrics, journal and
+    // backup tooling. Persisted so a power user only sets it once.
+    role: 'review',
   };
 
   const VIEW_MODES = ['labels', 'model', 'both'];
   const MODE_NAME = { labels: 'Labels', model: 'Model', both: 'Both' };
   // Bump alongside the ?v= on the asset tags in index.html. Worth noticing: the
   // footer prints it, so a stale page is obvious at a glance instead of silent.
-  const UI_VERSION = 'v8';
+  const UI_VERSION = 'v23';
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('canvas');
   const ctx = canvas.getContext('2d');
+
+  /**
+   * Encode an image id for use in a URL path.
+   *
+   * Image ids are built from filenames, which routinely contain '#', spaces,
+   * '(' and ')'. An unencoded '#' starts a URL fragment, so the request is cut
+   * short at that character and the server answers "unknown image" - which is
+   * exactly what happened for every frame of an ingested video. Encode each
+   * segment but keep the split separator.
+   */
+  function encId(id) {
+    return String(id).split('/').map(encodeURIComponent).join('/');
+  }
+
+  // ------------------------------------------------------------- help text
+  // Every explanation that used to sit inline in the UI lives here and is
+  // reachable through a "?" button. Keeping it in one table means the copy can
+  // be reviewed in one place, and the interface stays free of paragraphs that
+  // experienced contributors stop reading after the first day.
+  const HELP = {
+    decide: {
+      title: 'Judging a frame',
+      body: [
+        '<p><strong>Good</strong> — every player is boxed, tightly, and nothing that is not a player has a box.</p>',
+        '<p><strong>Needs fixing</strong> — then pick why. One reason is enough; the reason is what teaches us where the model is weak.</p>',
+        '<p><strong>Empty</strong> — a background frame with no players (menus, results, transitions). Use this instead of deleting boxes, so the model is taught that nothing is there.</p>',
+      ].join(''),
+    },
+    adopt: {
+      title: 'Adopting a suggestion',
+      body: [
+        '<p>The model found a player you have not boxed. <em>Adopt</em> adds its box as a label, so you only have to check and nudge it instead of drawing from scratch.</p>',
+        '<p>Only confident detections that do not overlap an existing label are offered. Dashed blue boxes on the canvas are the ones being offered — you can also click a single dashed box to adopt just that one.</p>',
+      ].join(''),
+    },
+    boxes: {
+      title: 'Editing boxes',
+      body: [
+        '<p>Drag a box to move it, drag a corner or edge to resize. <kbd>d</kbd> draws a new box, <kbd>Delete</kbd> removes the selected one.</p>',
+        '<p>Scroll to zoom, drag empty space to pan, <kbd>Esc</kbd> to deselect. Changes save automatically — the top-right indicator tells you when.</p>',
+        '<p>Switch to <strong>Expert</strong> to type exact coordinates.</p>',
+      ].join(''),
+    },
+    viewModes: {
+      title: 'Labels / Model / Both',
+      body: [
+        '<p><strong>Labels</strong> — only what is on disk. This is what the model trains on.</p>',
+        '<p><strong>Model</strong> — only the model\u2019s predictions, read-only. Use it to see what the model believes without your labels getting in the way.</p>',
+        '<p><strong>Both</strong> — overlay. Needed to adopt suggestions, since you have to see where a prediction would land.</p>',
+      ].join(''),
+    },
+    disagreement: {
+      title: 'Disagreement score',
+      body: [
+        '<p>How far the model and the labels are apart on this frame, from 0 (identical) to 1 (nothing in common). It is recomputed from what is on disk every time you save, so fixing a label immediately moves the number.</p>',
+        '<p>Sorting by <em>worst disagreement</em> (Expert) is the fastest way to find frames where either the label or the model is wrong.</p>',
+      ].join(''),
+    },
+    progress: {
+      title: 'Review progress',
+      body: [
+        '<p>A frame counts as reviewed once it has been marked <em>Good</em>, <em>Needs fixing</em>, or <em>Empty</em>. Merely opening it does not count — otherwise progress would claim work that was never judged.</p>',
+      ].join(''),
+    },
+    videoFrames: {
+      title: 'Why the boxes disappear',
+      body: [
+        '<p>Frames are sampled (about 5 per second) and menus are dropped, so the timeline has holes. Boxes are drawn from the nearest kept frame and hidden once you are more than a sampling interval away.</p>',
+        '<p>An empty overlay therefore means <em>the dataset has no frame here</em>\u2014not that the model found nothing. Clear <em>Follow sampled frames</em> to hold the nearest box instead.</p>',
+      ].join(''),
+    },
+  };
+
+  let popoverOwner = null;
+
+  function showPopover(btn) {
+    const key = btn.dataset.help;
+    const entry = HELP[key];
+    if (!entry) return;
+    // A "?" inside a hidden block has no position; anchoring to it would pin the
+    // popover to the top-left corner. Only visible buttons can open one.
+    if (!btn.getClientRects().length) return;
+    if (popoverOwner === btn) { hidePopover(); return; }
+    hidePopover();
+    popoverOwner = btn;
+    $('popoverTitle').textContent = entry.title;
+    $('popoverBody').innerHTML = entry.body;
+    const pop = $('popover');
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect();
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    // Prefer below-right; flip up/left rather than run off screen.
+    let left = r.left;
+    let top = r.bottom + 8;
+    if (left + w > window.innerWidth - 10) left = Math.max(10, window.innerWidth - w - 10);
+    if (top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 8);
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    btn.setAttribute('aria-expanded', 'true');
+  }
+
+  function hidePopover() {
+    if (popoverOwner) popoverOwner.setAttribute('aria-expanded', 'false');
+    popoverOwner = null;
+    const pop = $('popover');
+    if (pop) pop.hidden = true;
+  }
+
+  // ------------------------------------------------------------------ roles
+  // Review and Expert are the same app; only the CSS class on <body> changes.
+  // Hiding via CSS (rather than removing nodes) keeps every handler bound and
+  // means switching is instant and cannot leave the UI half-initialised.
+  function setRole(role, announce = true) {
+    if (role !== 'review' && role !== 'expert') role = 'review';
+    state.role = role;
+    document.body.classList.toggle('role-review', role === 'review');
+    document.body.classList.toggle('role-expert', role === 'expert');
+    for (const seg of $('roleSwitch').querySelectorAll('.seg')) {
+      seg.classList.toggle('on', seg.dataset.role === role);
+    }
+    try { localStorage.setItem('ssbu.role', role); } catch (e) { /* private mode */ }
+    if (announce) {
+      toast(role === 'expert'
+        ? 'Expert view — filters, metrics and journal are visible'
+        : 'Review view — the simple interface');
+    }
+    // The panel is rebuilt by role: experts see coordinate inputs, reviewers
+    // see a compact list they can only delete from.
+    renderPanel();
+    if (state.image) requestAnimationFrame(resizeCanvas);
+  }
+
+  // ------------------------------------------------------------ walkthrough
+  // Shown when a contributor picks up a bounty, and replayable from Help. Each
+  // step spotlights a real element and, where useful, points at it relative to
+  // the current screen rather than describing it abstractly.
+  const TOUR_STEPS = [
+    {
+      target: null,
+      title: 'Your bounty',
+      body: 'You have a slice of frames to review. Work left to right down the strip: '
+        + 'each frame is a decision, and the bar at the top fills as you go. '
+        + 'Everything saves automatically — you cannot lose work by closing the tab.',
+    },
+    {
+      target: '#strip',
+      title: 'Pick a frame',
+      body: 'The strip is your queue. Grey dots are unreviewed, green good, red needs fixing, '
+        + 'grey-white not gameplay. A bounty is a few hundred frames, so expect a few sessions.',
+    },
+    {
+      target: '#canvasWrap',
+      title: 'Look at the boxes',
+      body: 'Solid green boxes are the current labels — what the model will train on. '
+        + 'Dashed blue boxes are the model\u2019s own guesses. Your job is to make the green correct.',
+    },
+    {
+      target: '#decideBlock',
+      title: 'Judge the frame',
+      body: 'Press <kbd>g</kbd> if every player is boxed tightly and nothing else is. '
+        + 'Press <kbd>b</kbd> if something is wrong, then hit a number to say why. '
+        + 'Press <kbd>n</kbd> for menus and other non-gameplay frames.',
+    },
+    {
+      target: '#fixBlock',
+      title: 'Let the model help',
+      body: 'When the model spots a player you missed, it offers the box. '
+        + '<em>Adopt</em> adds it as a label so you only check it instead of drawing it. '
+        + 'Press <kbd>a</kbd> to adopt everything offered.',
+    },
+    {
+      target: '#viewToggleWrap',
+      title: 'Switch what you see',
+      body: 'Press <kbd>p</kbd> to cycle Labels → Model → Both. Use Labels to check what is on disk, '
+        + 'Model to see the model alone, Both to adopt.',
+    },
+    {
+      target: '#progressWrap',
+      title: 'Finish and commit',
+      body: 'When you are done, your labels are plain .txt files in the repo. '
+        + 'Commit and push them the same way you push code — that is what earns the bounty points.',
+    },
+  ];
+
+  const TOUR = { i: 0, open: false };
+
+  function startTour(force = false) {
+    if (!force) {
+      try { if (localStorage.getItem('ssbu.tourDone') === '1') return; } catch (e) { /* ignore */ }
+    }
+    TOUR.i = 0;
+    TOUR.open = true;
+    $('tourOverlay').hidden = false;
+    renderTour();
+  }
+
+  function endTour(done) {
+    TOUR.open = false;
+    $('tourOverlay').hidden = true;
+    $('tourSpot').style.cssText = '';
+    if (done) {
+      try { localStorage.setItem('ssbu.tourDone', '1'); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function renderTour() {
+    const step = TOUR_STEPS[TOUR.i];
+    const last = TOUR.i === TOUR_STEPS.length - 1;
+    $('tourStepLabel').textContent = `Step ${TOUR.i + 1} of ${TOUR_STEPS.length}`;
+    $('tourTitle').textContent = step.title;
+    $('tourBody').innerHTML = step.body;
+    $('tourBack').disabled = TOUR.i === 0;
+    $('tourNext').textContent = last ? 'Got it' : 'Next';
+    $('tourSkip').hidden = last;
+
+    const spot = $('tourSpot');
+    const target = step.target ? document.querySelector(step.target) : null;
+    const overlay = $('tourOverlay');
+    if (!target) {
+      // No element to point at: dim the whole screen instead of relying on the
+      // spotlight's shadow, which only exists when there is a spot.
+      overlay.classList.add('no-target');
+      spot.style.cssText = 'display:none';
+      positionTourCard(null, 0);
+      return;
+    }
+    overlay.classList.remove('no-target');
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    // Clamp to the viewport: a target flush against an edge would otherwise put
+    // a negative offset on the spotlight and leave a sliver un-dimmed.
+    const left = Math.max(0, r.left - pad);
+    const top = Math.max(0, r.top - pad);
+    const width = Math.min(window.innerWidth - left, r.width + pad * 2);
+    const height = Math.min(window.innerHeight - top, r.height + pad * 2);
+    spot.style.cssText = [
+      'display:block',
+      `left:${left}px`,
+      `top:${top}px`,
+      `width:${width}px`,
+      `height:${height}px`,
+    ].join(';');
+    positionTourCard(r, pad);
+  }
+
+  function positionTourCard(rect, pad) {
+    const card = $('tourCard');
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    let left;
+    let top;
+    if (!rect) {
+      left = (window.innerWidth - w) / 2;
+      top = (window.innerHeight - h) / 2;
+    } else {
+      // Prefer the side with more room so the card never covers the target.
+      const roomBelow = window.innerHeight - (rect.bottom + pad + 12);
+      const roomAbove = rect.top - pad - 12;
+      left = Math.min(Math.max(10, rect.left), window.innerWidth - w - 10);
+      top = roomBelow > h || roomBelow >= roomAbove
+        ? rect.bottom + pad + 12
+        : rect.top - pad - 12 - h;
+      top = Math.min(Math.max(10, top), window.innerHeight - h - 10);
+    }
+    card.style.left = left + 'px';
+    card.style.top = top + 'px';
+  }
+
 
   // --------------------------------------------------------- view modes
   // Editing is only meaningful when the labels are on screen, and adopting only
@@ -401,7 +677,7 @@
     state.saving = true;
     setSaveState('saving');
     try {
-      const resp = await api(`/api/sample/${imageId}/labels`, {
+      const resp = await api(`/api/sample/${encId(imageId)}/labels`, {
         method: 'PUT',
         body: JSON.stringify({ boxes, reason: 'canvas_edit' }),
       });
@@ -502,6 +778,7 @@
     });
     const data = await api('/api/samples?' + params.toString());
     state.total = data.total;
+    state.reviewedTotal = data.reviewed || 0;
     state.samples = reset ? data.items : state.samples.concat(data.items);
     state.offset = state.samples.length;
     renderStrip(reset);
@@ -521,7 +798,7 @@
   }
 
   async function loadSample(imageId) {
-    const data = await api('/api/sample/' + imageId);
+    const data = await api('/api/sample/' + encId(imageId));
     state.current = data;
     state.boxes = data.boxes.map((b) => ({ ...b }));
     state.savedBoxes = cloneBoxes(state.boxes);
@@ -541,7 +818,7 @@
       const img = new Image();
       img.onload = () => { state.image = img; resolve(); };
       img.onerror = () => { state.image = null; resolve(); };
-      img.src = '/api/image/' + imageId;
+      img.src = '/api/image/' + encId(imageId);
     });
 
     if (state.view.fitted === false) fitView();
@@ -608,7 +885,7 @@
 
     const img = document.createElement('img');
     img.loading = 'lazy';
-    img.src = '/api/thumb/' + row.image_id;
+    img.src = '/api/thumb/' + encId(row.image_id);
     img.alt = row.stem;
     el.appendChild(img);
 
@@ -664,12 +941,20 @@
 
   function renderProgress() {
     if (!state.dataset) return;
-    const reviewed = state.samples.filter((s) => s.status !== 'unreviewed').length;
-    const total = state.samples.length;
+    // Prefer the server's whole-filter tally; the loaded page is only a window
+    // onto a much larger queue in a bounty.
+    const total = state.total || state.samples.length;
+    const reviewed = state.reviewedTotal != null
+      ? state.reviewedTotal
+      : state.samples.filter((s) => s.status !== 'unreviewed').length;
     $('progressFill').style.width = (total ? (reviewed / total) * 100 : 0).toFixed(1) + '%';
     const r = state.dataset.review || {};
-    $('progressText').textContent =
-      `${reviewed}/${total} reviewed in view · ${r.good || 0} good · ${r.bad || 0} bad · ${r.empty || 0} empty`;
+    // Reviewers need the queue number; the good/bad/empty split is bookkeeping
+    // that only means something when auditing, so it is expert-only text.
+    $('progressText').textContent = state.role === 'expert'
+      ? `${reviewed}/${total} reviewed · ${r.good || 0} good · ${r.bad || 0} bad · ${r.empty || 0} empty`
+      : `${reviewed} of ${total} reviewed`;
+    updateBountyProgress();
   }
 
   // ------------------------------------------------------------ panel UI
@@ -705,16 +990,29 @@
     $('boxCount').textContent = String(state.boxes.length);
     const list = $('boxList');
     list.innerHTML = '';
+    const expert = state.role === 'expert';
     state.boxes.forEach((b, i) => {
       const row = document.createElement('div');
       row.className = 'box-row' + (i === state.selected ? ' selected' : '');
-      row.innerHTML = `
-        <span class="swatch"></span>
-        <input data-k="xc" type="number" step="0.001" min="0" max="1" value="${b.xc.toFixed(3)}" />
-        <input data-k="yc" type="number" step="0.001" min="0" max="1" value="${b.yc.toFixed(3)}" />
-        <input data-k="w" type="number" step="0.001" min="0" max="1" value="${b.w.toFixed(3)}" />
-        <input data-k="h" type="number" step="0.001" min="0" max="1" value="${b.h.toFixed(3)}" />
-        <button class="del ghost" title="Delete box">×</button>`;
+      // Reviewers get a compact row they can select and delete from; the exact
+      // coordinates are a power feature (Expert), not something to explain.
+      if (expert) {
+        row.innerHTML = `
+          <span class="swatch"></span>
+          <input data-k="xc" type="number" step="0.001" min="0" max="1" value="${b.xc.toFixed(3)}" />
+          <input data-k="yc" type="number" step="0.001" min="0" max="1" value="${b.yc.toFixed(3)}" />
+          <input data-k="w" type="number" step="0.001" min="0" max="1" value="${b.w.toFixed(3)}" />
+          <input data-k="h" type="number" step="0.001" min="0" max="1" value="${b.h.toFixed(3)}" />
+          <button class="del ghost" title="Delete box">×</button>`;
+      } else {
+        const size = `${Math.round(b.w * 100)}×${Math.round(b.h * 100)}%`;
+        row.classList.add('compact');
+        row.innerHTML = `
+          <span class="swatch"></span>
+          <span class="box-name">Player ${i + 1}</span>
+          <span class="box-meta muted">${size}</span>
+          <button class="del ghost" title="Delete box">×</button>`;
+      }
       row.addEventListener('mousedown', () => { state.selected = i; draw(); renderPanel(); });
       row.querySelectorAll('input').forEach((inp) => {
         inp.addEventListener('change', () => {
@@ -744,8 +1042,35 @@
     $('drawBtn').disabled = readOnly;
     $('boxList').classList.toggle('readonly', readOnly);
 
+    renderStatusPill();
     renderPredMetrics();
+    renderFixBlock();
     renderViewToggle();
+  }
+
+  /**
+   * A one-line answer to "have I already judged this?", so a reviewer returning
+   * to a half-finished bounty does not have to infer state from dot colours.
+   */
+  function renderStatusPill() {
+    const pill = $('statusPill');
+    const st = (state.current && state.current.status) || 'unreviewed';
+    const label = {
+      good: 'Marked good',
+      bad: 'Marked: needs fixing',
+      empty: 'Marked: not gameplay',
+      unreviewed: 'Not reviewed yet',
+    }[st] || st;
+    pill.textContent = label;
+    pill.className = 'status-pill ' + st;
+    pill.hidden = !state.current;
+
+    // Reasons and the note are only actionable while fixing, so they stay out
+    // of the way the rest of the time rather than sitting there as dead space.
+    $('badDetail').hidden = st !== 'bad';
+    // Choosing a reason is the one thing that must not be missed, so prompt it
+    // when a frame is bad but no reason has been picked yet.
+    $('reasonChips').classList.toggle('needs-reason', st === 'bad' && !state.reasons.length);
   }
 
   function hintFor(m) {
@@ -778,6 +1103,7 @@
     const pill = $('disagreeScore');
     pill.textContent = score.toFixed(2);
     pill.className = 'score-pill ' + scoreBand(score);
+    pill.title = hintFor(m);
 
     const parts = [];
     if (m.missed_player_hi) parts.push(`<span class="metric bad">unlabelled ×${m.missed_player_hi}</span>`);
@@ -788,22 +1114,48 @@
     parts.push(`<span class="metric">labels ${m.gt_count || 0}</span>`);
     parts.push(`<span class="metric">model ${m.pred_count || 0}</span>`);
     $('predMetrics').innerHTML = parts.join('');
-    $('predHint').textContent = hintFor(m);
 
     // Show what the dedupe+cap pass removed, so the correction is visible.
     const merged = cur.predictions_merged || 0;
     const pp = (state.predSummary && state.predSummary.postprocess) || {};
-    $('predClean').textContent = merged
+    state.cleanNote = merged
       ? `Dedupe merged ${merged} duplicate box${merged === 1 ? '' : 'es'} (IoU ${pp.nms_iou}, cap ${pp.max_boxes}/frame).`
       : '';
-
-    // Offer the adopt action only when there is something to adopt, and only in
-    // a view where the labels are visible to adopt into.
-    const adoptable = adoptEnabled() ? adoptablePreds(0.5).length : 0;
-    const btn = $('adoptBtn');
-    btn.hidden = adoptable === 0;
-    btn.textContent = `Adopt ${adoptable} missing (a)`;
   }
+
+  /**
+   * The one piece of model output a reviewer needs: "there is a player here you
+   * have not boxed, accept it?". Kept separate from the expert metrics block so
+   * the suggestion survives when the numbers are hidden.
+   */
+  function renderFixBlock() {
+    const cur = state.current;
+    const hasPred = !!(cur && cur.predictions_available);
+    // Offer the action only when labels are visible to adopt into.
+    const adoptable = hasPred && adoptEnabled() ? adoptablePreds(0.5).length : 0;
+    const btn = $('adoptBtn');
+    const block = $('fixBlock');
+
+    btn.hidden = adoptable === 0;
+    if (adoptable) {
+      btn.textContent = adoptable === 1
+        ? 'Adopt 1 missing box (a)'
+        : `Adopt ${adoptable} missing boxes (a)`;
+    }
+    const note = $('fixNote');
+    if (!hasPred) {
+      note.textContent = '';
+    } else if (!adoptEnabled()) {
+      note.textContent = 'Switch to Both to adopt suggestions.';
+    } else if (adoptable) {
+      note.textContent = 'Click a dashed box to adopt just that one.';
+    } else {
+      note.textContent = 'Nothing unlabelled stands out on this frame.';
+    }
+    $('fixCount').textContent = adoptable ? `(${adoptable})` : '';
+    block.hidden = !hasPred;
+  }
+
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) =>
@@ -834,13 +1186,22 @@
   async function postReview(status) {
     if (!state.current) return;
     try {
-      const data = await api(`/api/sample/${state.current.image_id}/review`, {
+      const data = await api(`/api/sample/${encId(state.current.image_id)}/review`, {
         method: 'POST',
         body: JSON.stringify({ status, reasons: state.reasons, note: $('noteBox').value }),
       });
       const imageId = state.current.image_id;
+      const prevStatus = state.current.status;
       state.current.status = data.review.status;
       state.current.review = data.review;
+      // Keep the queue tally in step without a round-trip: only the
+      // unreviewed -> reviewed boundary changes the count.
+      if (state.reviewedTotal != null) {
+        const wasReviewed = prevStatus && prevStatus !== 'unreviewed';
+        const isReviewed = data.review.status !== 'unreviewed';
+        if (!wasReviewed && isReviewed) state.reviewedTotal += 1;
+        else if (wasReviewed && !isReviewed) state.reviewedTotal -= 1;
+      }
       refreshRow(imageId, { status: data.review.status, reasons: data.review.reasons });
       // The dataset-wide tally lives on the server; refresh it before painting
       // progress so the header numbers are not a step behind.
@@ -849,6 +1210,10 @@
       } catch (_) { /* header counts are cosmetic */ }
       renderProgress();
       syncChips();
+      // The status pill and the reasons/note panel are driven by the status we
+      // just stored, so they have to be repainted here — nothing else redraws
+      // the panel on a review change.
+      renderStatusPill();
       return data.review.status;
     } catch (err) {
       toast('Review update failed: ' + err.message, true);
@@ -857,6 +1222,10 @@
   }
 
   async function markGood() {
+    // Clearing reasons matters: a stale reason from the previous bad frame
+    // would otherwise be recorded against a good one.
+    state.reasons = [];
+    syncChips();
     await postReview('good');
     toast('Marked good');
     step(1);
@@ -871,12 +1240,13 @@
   }
 
   async function markBad() {
-    if (state.reasons.length === 0) {
-      toast('Pick a reason first (keys 1-6), then it saves automatically');
-      return;
-    }
+    // A reason is strongly encouraged but not a precondition: gating on it
+    // deadlocked the UI, because the chips that set a reason only appear once
+    // the frame is already marked bad.
     await postReview('bad');
-    toast('Marked bad: ' + state.reasons.join(', '));
+    toast(state.reasons.length
+      ? 'Needs fixing: ' + state.reasons.join(', ')
+      : 'Needs fixing — now pick a reason (1–6)');
   }
 
   async function loadJournal() {
@@ -1076,7 +1446,49 @@
     const tag = (evt.target.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea';
 
+    // The walkthrough is modal: while it is up, keys drive the tour rather than
+    // the review queue underneath it.
+    if (TOUR.open) {
+      if (evt.key === 'Escape') { endTour(false); return; }
+      if (evt.key === 'ArrowRight' || evt.key === 'Enter') {
+        evt.preventDefault();
+        $('tourNext').click();
+        return;
+      }
+      if (evt.key === 'ArrowLeft') { evt.preventDefault(); $('tourBack').click(); return; }
+      return;
+    }
+
+    // Video mode owns space and the arrow keys; the image bindings below would
+    // otherwise pull the review queue out from under the player.
+    if (state.appMode === 'video' && !typing) {
+      if (evt.key === ' ' || evt.key === 'k') {
+        evt.preventDefault();
+        toggleVideoPlay();
+        return;
+      }
+      if (evt.key === 'ArrowRight' || evt.key === 'l') {
+        evt.preventDefault();
+        stepVideoFrame(1);
+        return;
+      }
+      if (evt.key === 'ArrowLeft' || evt.key === 'j') {
+        evt.preventDefault();
+        stepVideoFrame(-1);
+        return;
+      }
+      if (evt.key === 'p') {
+        evt.preventDefault();
+        const order = ['labels', 'model', 'both'];
+        const next = order[(order.indexOf(VIDEO.viewMode) + 1) % order.length];
+        setVideoViewMode(next);
+        return;
+      }
+    }
+
     if (evt.key === 'Escape') {
+      if (TOUR.open) { endTour(false); return; }
+      if (!$('popover').hidden) { hidePopover(); return; }
       if (!$('helpOverlay').hidden) { $('helpOverlay').hidden = true; return; }
       state.selected = -1;
       state.drawing = false;
@@ -1233,6 +1645,349 @@
   }
 
   // ------------------------------------------------------------ wiring up
+  // ------------------------------------------------------------ video mode
+  //
+  // Playback mode replays a source MP4 with the dataset's boxes drawn over it.
+  // The ingest samples at a target fps and drops menus, so the timeline is
+  // sparse: boxes are shown for the nearest kept frame and hidden when the
+  // playhead is further away than half a sampling interval. That makes the
+  // overlay honest - if the overlay is empty, the dataset really has no frame
+  // there, instead of quietly showing a stale box over a results screen.
+
+  const VIDEO = {
+    loaded: false,
+    index: 0,
+    videos: [],
+    frames: [],
+    times: [],
+    tolerance: 0.5,
+    viewMode: 'both',
+    active: null,       // nearest frame for the current playhead
+    raf: null,
+    seeking: false,
+  };
+
+  async function loadVideos() {
+    try {
+      const res = await api('/api/videos');
+      VIDEO.videos = res.videos || [];
+    } catch (err) {
+      VIDEO.videos = [];
+    }
+    const sel = $('videoSelect');
+    sel.innerHTML = '';
+    if (!VIDEO.videos.length) {
+      $('videoEmpty').textContent =
+        'No source video found for this dataset. Ingest a video with ' +
+        'scripts/ingest_video.py, or start the server with --video <file>.';
+      $('videoEmpty').hidden = false;
+      $('videoEl').hidden = true;
+      $('videoInfo').textContent = '';
+      return;
+    }
+    $('videoEmpty').hidden = true;
+    $('videoEl').hidden = false;
+    for (const v of VIDEO.videos) {
+      const opt = document.createElement('option');
+      opt.value = String(v.index);
+      opt.textContent = v.name;
+      sel.appendChild(opt);
+    }
+    sel.value = String(VIDEO.index);
+    await openVideo(VIDEO.index);
+  }
+
+  async function openVideo(index) {
+    if (!VIDEO.videos.length) return;
+    VIDEO.index = Math.max(0, Math.min(index, VIDEO.videos.length - 1));
+    const el = $('videoEl');
+    el.pause();
+    el.src = '/api/video/' + VIDEO.index;
+    el.load();
+    VIDEO.frames = [];
+    VIDEO.times = [];
+    VIDEO.active = null;
+    VIDEO.loaded = false;
+    $('videoFrameInfo').textContent = 'loading timeline…';
+    $('videoEmpty').hidden = true;
+    drawVideoOverlay();
+
+    let data;
+    try {
+      data = await api('/api/video/' + VIDEO.index + '/timeline');
+    } catch (err) {
+      $('videoFrameInfo').textContent = 'timeline failed: ' + err.message;
+      return;
+    }
+    VIDEO.frames = (data.frames || []).filter((f) => typeof f.t === 'number');
+    VIDEO.times = VIDEO.frames.map((f) => f.t);
+    VIDEO.loaded = true;
+    // Half the typical gap is the natural cut-off: any further and the box
+    // belongs to a meaningfully different moment than what is on screen.
+    if (VIDEO.times.length > 1) {
+      const gaps = [];
+      for (let i = 1; i < VIDEO.times.length; i++) gaps.push(VIDEO.times[i] - VIDEO.times[i - 1]);
+      gaps.sort((a, b) => a - b);
+      const median = gaps[Math.floor(gaps.length / 2)] || 0.2;
+      // One sampling interval each side gives contiguous coverage between
+      // kept frames (no flicker) while still hiding the overlay within a
+      // fraction of a second of a real gap such as a menu or results screen.
+      VIDEO.tolerance = Math.min(0.6, Math.max(0.2, median));
+    }
+    const meta = VIDEO.videos[VIDEO.index];
+    const bits = [meta.name];
+    if (meta.duration) bits.push(fmtDuration(meta.duration));
+    if (VIDEO.frames.length) bits.push(VIDEO.frames.length + ' sampled frames');
+    $('videoInfo').textContent = bits.join(' · ');
+    $('videoFrameInfo').textContent = '';
+    updateVideoClock();
+    drawVideoOverlay();
+  }
+
+  function fmtDuration(sec) {
+    if (typeof sec !== 'number' || !isFinite(sec)) return '–';
+    const s = Math.max(0, Math.floor(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
+  }
+
+  function nearestFrameIndex(t) {
+    const times = VIDEO.times;
+    if (!times.length) return -1;
+    let lo = 0;
+    let hi = times.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (times[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(times[lo - 1] - t) <= Math.abs(times[lo] - t)) return lo - 1;
+    return lo;
+  }
+
+  function activeVideoFrame() {
+    if (!VIDEO.times.length) return null;
+    const t = $('videoEl').currentTime || 0;
+    const i = nearestFrameIndex(t);
+    if (i < 0) return null;
+    const f = VIDEO.frames[i];
+    const strict = $('videoFollowFrame').checked;
+    if (strict && Math.abs(f.t - t) > VIDEO.tolerance) return null;
+    return f;
+  }
+
+  function videoBoxesVisible(kind) {
+    return VIDEO.viewMode === 'both' || VIDEO.viewMode === kind;
+  }
+
+  function drawVideoOverlay() {
+    const c = $('videoOverlay');
+    const v = $('videoEl');
+    const rect = c.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = Math.max(1, Math.round(rect.width));
+    const cssH = Math.max(1, Math.round(rect.height));
+    if (c.width !== Math.round(cssW * dpr) || c.height !== Math.round(cssH * dpr)) {
+      c.width = Math.round(cssW * dpr);
+      c.height = Math.round(cssH * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, cssW, cssH);
+    if (!v.videoWidth || !v.videoHeight) return;
+
+    // object-fit: contain -> the picture is letterboxed inside the element.
+    const scale = Math.min(cssW / v.videoWidth, cssH / v.videoHeight);
+    const dw = v.videoWidth * scale;
+    const dh = v.videoHeight * scale;
+    const ox = (cssW - dw) / 2;
+    const oy = (cssH - dh) / 2;
+
+    const frame = activeVideoFrame();
+    VIDEO.active = frame;
+    if (!frame) {
+      $('videoFrameInfo').textContent = VIDEO.times.length
+        ? 'no sampled frame here'
+        : '';
+      return;
+    }
+
+    const draw = (box, color, dashed, label) => {
+      const x = ox + (box.xc - box.w / 2) * dw;
+      const y = oy + (box.yc - box.h / 2) * dh;
+      const w = box.w * dw;
+      const h = box.h * dh;
+      g.save();
+      g.lineWidth = 2.5;
+      g.strokeStyle = color;
+      if (dashed) g.setLineDash([7, 5]);
+      g.strokeRect(x, y, w, h);
+      g.setLineDash([]);
+      if (label) {
+        g.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+        const tw = g.measureText(label).width + 8;
+        const ty = y - 6 > 14 ? y - 6 : y + h + 14;
+        g.fillStyle = 'rgba(11, 15, 20, 0.82)';
+        g.fillRect(x - 1, ty - 12, tw, 16);
+        g.fillStyle = color;
+        g.fillText(label, x + 3, ty);
+      }
+      g.restore();
+    };
+
+    if (videoBoxesVisible('model')) {
+      for (const b of frame.model || []) {
+        // Same amber as the static canvas and the legend swatch: one meaning,
+        // one colour, regardless of which mode you are looking at.
+        draw(b, '#e0a437', true, b.conf ? `${Math.round(b.conf * 100)}%` : 'model');
+      }
+    }
+    if (videoBoxesVisible('labels')) {
+      for (const b of frame.labels || []) {
+        draw(b, '#35c07a', false, b.cls ? `#${b.cls}` : 'label');
+      }
+    }
+
+    const i = nearestFrameIndex(frame.t);
+    $('videoFrameInfo').textContent =
+      `frame ${i + 1}/${VIDEO.frames.length} · t=${frame.t.toFixed(2)}s · ` +
+      `${(frame.labels || []).length} label / ${(frame.model || []).length} model`;
+  }
+
+  function updateVideoClock() {
+    const v = $('videoEl');
+    const dur = isFinite(v.duration) ? v.duration : (VIDEO.videos[VIDEO.index] || {}).duration;
+    const t = v.currentTime || 0;
+    $('videoTime').textContent = `${fmtDuration(t)} / ${fmtDuration(dur)}`;
+    if (!VIDEO.seeking && dur > 0) {
+      $('videoSeek').value = String(Math.round((t / dur) * 1000));
+    }
+  }
+
+  function videoTick() {
+    updateVideoClock();
+    drawVideoOverlay();
+    const v = $('videoEl');
+    if (!v.paused && !v.ended) {
+      VIDEO.raf = requestAnimationFrame(videoTick);
+    } else {
+      VIDEO.raf = null;
+    }
+  }
+
+  function toggleVideoPlay() {
+    const v = $('videoEl');
+    if (v.paused) v.play().catch((err) => toast('Cannot play: ' + err.message, true));
+    else v.pause();
+  }
+
+  function seekVideoTo(t, play = false) {
+    const v = $('videoEl');
+    const dur = isFinite(v.duration) ? v.duration : 0;
+    v.currentTime = Math.max(0, dur ? Math.min(t, dur - 0.01) : t);
+    drawVideoOverlay();
+    updateVideoClock();
+    if (play) v.play().catch(() => {});
+  }
+
+  function stepVideoFrame(delta) {
+    if (!VIDEO.times.length) return;
+    const v = $('videoEl');
+    const i = nearestFrameIndex(v.currentTime || 0);
+    const base = delta > 0 && VIDEO.times[i] < (v.currentTime || 0) - 1e-3 ? i + 1 : i;
+    const next = Math.max(0, Math.min(VIDEO.frames.length - 1, base + (delta > 0 ? 0 : -1)));
+    // Land exactly on the sample so "follow sampled frames" always shows it.
+    seekVideoTo(VIDEO.times[next] + 0.001);
+  }
+
+  function setVideoViewMode(mode) {
+    VIDEO.viewMode = mode;
+    for (const seg of $('videoViewToggle').querySelectorAll('.seg')) {
+      seg.classList.toggle('on', seg.dataset.vmode === mode);
+    }
+    drawVideoOverlay();
+  }
+
+  function setAppMode(mode) {
+    state.appMode = mode;
+    for (const seg of $('appMode').querySelectorAll('.seg')) {
+      seg.classList.toggle('on', seg.dataset.appmode === mode);
+    }
+    const isVideo = mode === 'video';
+    $('layout').hidden = isVideo;
+    $('videoView').hidden = !isVideo;
+    if (isVideo) {
+      if (!VIDEO.loaded) loadVideos();
+      requestAnimationFrame(() => {
+        drawVideoOverlay();
+        updateVideoClock();
+      });
+    } else {
+      const v = $('videoEl');
+      if (v) v.pause();
+      resizeCanvas();
+      draw();
+    }
+    try {
+      localStorage.setItem('ssbu.appMode', mode);
+    } catch (e) { /* private mode */ }
+  }
+
+  function bindVideo() {
+    $('appMode').addEventListener('click', (e) => {
+      const seg = e.target.closest('.seg');
+      if (seg) setAppMode(seg.dataset.appmode);
+    });
+    $('videoViewToggle').addEventListener('click', (e) => {
+      const seg = e.target.closest('.seg');
+      if (seg) setVideoViewMode(seg.dataset.vmode);
+    });
+    $('videoSelect').addEventListener('change', (e) => openVideo(Number(e.target.value)));
+
+    const v = $('videoEl');
+    v.addEventListener('play', () => {
+      $('videoPlay').textContent = 'Pause';
+      if (!VIDEO.raf) VIDEO.raf = requestAnimationFrame(videoTick);
+    });
+    v.addEventListener('pause', () => {
+      $('videoPlay').textContent = 'Play';
+      if (VIDEO.raf) { cancelAnimationFrame(VIDEO.raf); VIDEO.raf = null; }
+      updateVideoClock();
+      drawVideoOverlay();
+    });
+    v.addEventListener('loadedmetadata', () => {
+      updateVideoClock();
+      drawVideoOverlay();
+    });
+    v.addEventListener('seeked', () => {
+      VIDEO.seeking = false;
+      updateVideoClock();
+      drawVideoOverlay();
+    });
+    v.addEventListener('timeupdate', updateVideoClock);
+    v.addEventListener('ended', () => { $('videoPlay').textContent = 'Play'; });
+
+    $('videoPlay').addEventListener('click', toggleVideoPlay);
+    $('videoPrev').addEventListener('click', () => stepVideoFrame(-1));
+    $('videoNext').addEventListener('click', () => stepVideoFrame(1));
+    $('videoFollowFrame').addEventListener('change', drawVideoOverlay);
+    const seek = $('videoSeek');
+    seek.addEventListener('input', () => {
+      VIDEO.seeking = true;
+      const dur = isFinite(v.duration) ? v.duration : 0;
+      if (dur > 0) v.currentTime = (Number(seek.value) / 1000) * dur;
+      updateVideoClock();
+      drawVideoOverlay();
+    });
+    seek.addEventListener('change', () => { VIDEO.seeking = false; });
+    window.addEventListener('resize', () => {
+      if (state.appMode === 'video') drawVideoOverlay();
+    });
+  }
+
   function bind() {
     $('splitFilter').addEventListener('change', () => loadSamples(true));
     $('statusFilter').addEventListener('change', () => loadSamples(true));
@@ -1258,7 +2013,7 @@
       if (state.dirty) { undo(); return; }
       if (!state.current) return;
       try {
-        const res = await api('/api/undo/' + state.current.image_id, { method: 'POST', body: '{}' });
+        const res = await api('/api/undo/' + encId(state.current.image_id), { method: 'POST', body: '{}' });
         if (res.restored) {
           toast('Reverted last saved edit from journal');
           await loadSample(state.current.image_id);
@@ -1287,7 +2042,46 @@
       if (e.target === $('helpOverlay')) $('helpOverlay').hidden = true;
     });
 
+    // Role switch: the only structural UI control a reviewer is trusted with.
+    $('roleSwitch').addEventListener('click', (e) => {
+      const seg = e.target.closest('.seg');
+      if (seg) setRole(seg.dataset.role);
+    });
+
+    // One delegated listener for every "?" button. Delegation means a popover
+    // added to any block later needs no extra wiring.
+    document.addEventListener('click', (e) => {
+      const info = e.target.closest('.info');
+      if (info) {
+        e.preventDefault();
+        showPopover(info);
+        return;
+      }
+      if (!e.target.closest('#popover')) hidePopover();
+    });
+    $('popoverClose').addEventListener('click', hidePopover);
+
+    // Walkthrough controls.
+    $('tourNext').addEventListener('click', () => {
+      if (TOUR.i >= TOUR_STEPS.length - 1) { endTour(true); return; }
+      TOUR.i += 1;
+      renderTour();
+    });
+    $('tourBack').addEventListener('click', () => {
+      if (TOUR.i > 0) { TOUR.i -= 1; renderTour(); }
+    });
+    $('tourSkip').addEventListener('click', () => endTour(false));
+    $('replayTour').addEventListener('click', () => {
+      $('helpOverlay').hidden = true;
+      startTour(true);
+    });
+    $('tourBtn').addEventListener('click', () => startTour(true));
+
     window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('resize', () => {
+      hidePopover();
+      if (TOUR.open) renderTour();
+    });
     window.addEventListener('beforeunload', (e) => {
       if (state.dirty) { saveNow(true); e.preventDefault(); e.returnValue = ''; }
     });
@@ -1327,12 +2121,54 @@
     return applied;
   }
 
+  /**
+   * A bounty is just a named slice of the queue, plus a reason to work on it.
+   * The CLI passes ?bounty=<title>&claim=<n>&of=<total>. Nothing here is
+   * authoritative: progress is recomputed from the review store, so a stale
+   * link cannot overstate what is done.
+   */
+  function initBounty() {
+    const params = new URLSearchParams(location.search);
+    const title = params.get('bounty');
+    if (!title) return;
+    $('bountyTitle').textContent = title;
+    $('bountyBar').hidden = false;
+    document.body.classList.add('has-bounty');
+    updateBountyProgress();
+    // The walkthrough is the onboarding step for a claimed bounty, so it runs
+    // once per contributor rather than once per bounty.
+    startTour(false);
+  }
+
+  function updateBountyProgress() {
+    if ($('bountyBar').hidden) return;
+    const total = state.total || 0;
+    const done = state.reviewedTotal != null
+      ? state.reviewedTotal
+      : state.samples.filter((s) => s.status && s.status !== 'unreviewed').length;
+    $('bountyProgress').textContent = total
+      ? `${done} of ${total} reviewed`
+      : '';
+  }
+
   async function boot() {
     bind();
+    bindVideo();
     resizeCanvas();
     const stamp = $('uiVersion');
     if (stamp) stamp.textContent = UI_VERSION;
     window.__uiVersion = UI_VERSION;
+
+    // Restore the detail level before anything renders, so a returning expert
+    // does not see the panel flip from simple to full.
+    let role = 'review';
+    try {
+      const savedRole = localStorage.getItem('ssbu.role');
+      if (savedRole === 'expert') role = 'expert';
+    } catch (e) { /* private mode */ }
+    if (new URLSearchParams(location.search).get('role') === 'expert') role = 'expert';
+    setRole(role, false);
+
     try {
       await loadDataset();
       // After loadDataset, since it may hide filters that do not apply and
@@ -1342,6 +2178,24 @@
       await loadSamples(true);
       await loadJournal();
       setInterval(loadJournal, 15000);
+      updateBountyProgress();
+      initBounty();
+      // An explicit ?mode= wins in both directions. Only falling back to the
+      // remembered mode when there is no mode in the URL avoids the trap where
+      // a shared ?mode=images link opened video because that is what this
+      // browser last used.
+      let mode = 'images';
+      const params = new URLSearchParams(location.search);
+      const modeParam = params.get('mode');
+      if (modeParam === 'video' || modeParam === 'images') {
+        mode = modeParam;
+      } else {
+        try {
+          const saved = localStorage.getItem('ssbu.appMode');
+          if (saved === 'video') mode = 'video';
+        } catch (e) { /* private mode */ }
+      }
+      setAppMode(mode);
     } catch (err) {
       toast('Startup failed: ' + err.message, true);
     }

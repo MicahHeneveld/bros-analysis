@@ -17,7 +17,7 @@ import sys
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -37,6 +37,38 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 CLOUD_MARKERS = ("/CloudStorage/", "/content/drive", "/My Drive/")
 
 
+def parse_range(header: str | None, size: int) -> tuple[int, int, bool] | None:
+    """Parse a single-range ``Range`` header against a file of ``size`` bytes.
+
+    Returns ``(start, end, partial)`` with an inclusive ``end``, or ``None``
+    when the requested range cannot be satisfied (the caller must answer 416).
+    An absent or unrecognised header means "send the whole file".
+
+    Kept separate from the handler so the seeking behaviour - the part that
+    decides whether the browser can scrub a video - is directly testable.
+    """
+    if not header or not header.startswith("bytes="):
+        return 0, size - 1, False
+    spec = header[len("bytes="):].split(",")[0].strip()
+    first, _, last = spec.partition("-")
+    start, end = 0, size - 1
+    try:
+        if first:
+            start = int(first)
+            if last:
+                end = min(int(last), size - 1)
+        elif last:
+            # "bytes=-500" means the final 500 bytes.
+            start = max(0, size - int(last))
+        else:
+            return 0, size - 1, False
+    except ValueError:
+        return 0, size - 1, False
+    if start > end or start >= size:
+        return None
+    return start, end, True
+
+
 class AppState:
     def __init__(
         self,
@@ -44,6 +76,7 @@ class AppState:
         predictions_path: Path | None = None,
         nms_iou: float = NMS_IOU,
         max_boxes: int = MAX_BOXES,
+        videos: list[Path] | None = None,
     ):
         self.dataset_root = dataset_root
         self.labels = LabelStore(dataset_root)
@@ -75,8 +108,66 @@ class AppState:
         # so the same stored predictions are scored and displayed consistently.
         self.nms_iou = nms_iou
         self.max_boxes = max_boxes
+        # Source videos for playback mode. Discovered from the ingest manifest
+        # (which records the path it came from) plus any explicit --video.
+        self.videos = self._discover_videos(videos or [])
+        self._timeline_cache: dict[str, dict] = {}
         self._samples_cache: list[dict] | None = None
         self._lock = threading.Lock()
+
+    def _discover_videos(self, explicit: list[Path]) -> list[dict]:
+        """Registered videos, in a stable order.
+
+        Only these are ever streamed, so a client cannot ask the server to read
+        an arbitrary file off disk.
+        """
+        found: list[dict] = []
+        seen: set[str] = set()
+
+        def candidates(path: Path) -> list[Path]:
+            if path.is_absolute():
+                return [path]
+            # Ingest records the path it was given. Resolve relative entries
+            # against the likely roots instead of guessing one.
+            roots = [Path.cwd(), self.dataset_root, self.dataset_root.parent, self.dataset_root.parent.parent]
+            return [root / path for root in roots]
+
+        def add(path: Path, label: str, key: str, info: dict) -> None:
+            for candidate in candidates(path):
+                try:
+                    resolved = candidate.expanduser().resolve()
+                except OSError:
+                    continue
+                ident = str(resolved)
+                if ident in seen or not resolved.is_file():
+                    continue
+                seen.add(ident)
+                found.append(
+                    {
+                        "path": resolved,
+                        "name": label or resolved.stem,
+                        "key": key,
+                        "duration": info.get("duration_s"),
+                        "fps": info.get("fps"),
+                        "width": info.get("width"),
+                        "height": info.get("height"),
+                    }
+                )
+                return
+
+        for path in explicit:
+            add(path, path.stem, path.stem, {})
+
+        manifest_path = self.dataset_root / "manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except ValueError:
+                manifest = {}
+            for key, info in (manifest.get("sources") or {}).items():
+                if isinstance(info, dict) and info.get("path"):
+                    add(Path(info["path"]), key, key, info)
+        return found
 
     def cleaned_preds(self, rec: dict) -> list[dict]:
         """Stored predictions with duplicates merged and the box count capped."""
@@ -194,6 +285,63 @@ class AppState:
             if row["image_id"] == image_id:
                 return row
         return None
+
+    def video_timeline(self, index: int) -> dict:
+        """Every sampled frame of a video, with its time and boxes.
+
+        The ingest samples at a target fps and drops menus, so the timeline is
+        sparse: there are gaps where no frame was kept. The player uses the
+        time of the nearest kept frame, which means overlays vanish exactly
+        where the dataset has no data instead of showing a stale box.
+        """
+        videos = self.videos
+        if index < 0 or index >= len(videos):
+            raise ValueError("unknown video")
+        video = videos[index]
+        cache_key = str(video["path"])
+        cached = self._timeline_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        source_key = video.get("key")
+        frames = []
+        for row in self.samples():
+            image_id = row["image_id"]
+            # Read the raw record: Predictions.get() returns only the fields
+            # the review panel needs, and drops time_s / frame_index.
+            rec = self.predictions.records.get(image_id) or {}
+            if source_key:
+                # Skip frames explicitly attributed to a different source when
+                # several videos share one dataset. Records with no source (a
+                # hand-built dataset) are still included.
+                src = rec.get("source")
+                if src is not None and src != source_key:
+                    continue
+            frames.append(
+                {
+                    "image_id": image_id,
+                    "t": rec.get("time_s"),
+                    "frame": rec.get("frame_index"),
+                    "labels": [
+                        {"cls": b.cls, "xc": b.xc, "yc": b.yc, "w": b.w, "h": b.h}
+                        for b in self.labels.load(image_id).boxes
+                    ],
+                    "model": self.cleaned_preds(rec) if rec else [],
+                }
+            )
+        frames.sort(key=lambda f: (f["t"] is None, f["t"] or 0, f["frame"] or 0))
+        payload = {
+            "video": {
+                "index": index,
+                "name": video["name"],
+                "duration": video.get("duration"),
+                "fps": video.get("fps"),
+            },
+            "frames": frames,
+        }
+        self._timeline_cache[cache_key] = payload
+        return payload
+
 
 
 def sort_samples(rows: list[dict], sort: str) -> list[dict]:
@@ -328,11 +476,57 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_video(self, path: Path, content_type: str = "video/mp4") -> None:
+        """Stream a video, honouring HTTP Range so the browser can seek.
+
+        Without Range support the <video> element will not scrub: it either
+        refuses to play or downloads the whole file before showing a frame.
+        Only registered videos reach this method, never a client-supplied path.
+        """
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return self.send_error_json("video not readable", 404)
+
+        parsed = parse_range(self.headers.get("Range"), size)
+        if parsed is None:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end, partial = parsed
+
+        length = end - start + 1
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if partial:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = fh.read(min(256 * 1024, remaining))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                remaining -= len(chunk)
+
     # ----- routing -------------------------------------------------------
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        path = parsed.path
+        # Percent-decode the path before routing. Image ids are derived from
+        # filenames, and a video stem routinely contains spaces, '#', '(' and
+        # ')'. The browser percent-encodes those, so without this every such
+        # image id resolves to nothing and 404s as "unknown image".
+        path = unquote(parsed.path)
         query = parse_qs(parsed.query)
 
         if path.startswith("/api/"):
@@ -347,10 +541,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
-        if not parsed.path.startswith("/api/"):
+        path = unquote(parsed.path)
+        if not path.startswith("/api/"):
             return self.send_error_json("not found", 404)
         try:
-            return self.handle_api_put(parsed.path)
+            return self.handle_api_put(path)
         except ValueError as exc:
             return self.send_error_json(str(exc), 400)
         except Exception as exc:  # noqa: BLE001
@@ -358,10 +553,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if not parsed.path.startswith("/api/"):
+        path = unquote(parsed.path)
+        if not path.startswith("/api/"):
             return self.send_error_json("not found", 404)
         try:
-            return self.handle_api_post(parsed.path)
+            return self.handle_api_post(path)
         except ValueError as exc:
             return self.send_error_json(str(exc), 400)
         except Exception as exc:  # noqa: BLE001
@@ -434,12 +630,57 @@ class Handler(SimpleHTTPRequestHandler):
             ]
             filtered = sort_samples(filtered, sort)
             page = filtered[offset : offset + limit]
+            # The reviewed tally has to be computed over the whole filtered set,
+            # not the page, or a reviewer with 200 of 1654 loaded sees a progress
+            # bar that appears to jump backwards as they scroll.
+            reviewed = sum(1 for r in filtered if r.get("status") != "unreviewed")
             return self.send_json(
-                {"total": len(filtered), "offset": offset, "limit": limit, "items": page}
+                {
+                    "total": len(filtered),
+                    "reviewed": reviewed,
+                    "offset": offset,
+                    "limit": limit,
+                    "items": page,
+                }
             )
 
         if path == "/api/predictions":
             return self.send_json(state.prediction_stats())
+
+        if path == "/api/videos":
+            return self.send_json(
+                {
+                    "videos": [
+                        {
+                            "index": i,
+                            "name": v["name"],
+                            "duration": v.get("duration"),
+                            "fps": v.get("fps"),
+                            "width": v.get("width"),
+                            "height": v.get("height"),
+                        }
+                        for i, v in enumerate(state.videos)
+                    ]
+                }
+            )
+
+        if path.startswith("/api/video/"):
+            rest = path[len("/api/video/") :]
+            num, _, sub = rest.partition("/")
+            try:
+                index = int(num)
+            except ValueError:
+                return self.send_error_json("bad video index", 400)
+            if index < 0 or index >= len(state.videos):
+                return self.send_error_json("unknown video", 404)
+            if sub == "timeline":
+                try:
+                    return self.send_json(state.video_timeline(index))
+                except ValueError as exc:
+                    return self.send_error_json(str(exc), 404)
+            if sub == "":
+                return self.send_video(state.videos[index]["path"])
+            return self.send_error_json("unknown video endpoint", 404)
 
         if path.startswith("/api/sample/"):
             image_id = path[len("/api/sample/") :]
@@ -683,6 +924,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--video",
+        action="append",
+        default=None,
+        metavar="MP4",
+        help=(
+            "Source video to expose in playback mode (repeatable). Videos are "
+            "also auto-discovered from the dataset's ingest manifest.json, so "
+            "this is only needed for a hand-built dataset."
+        ),
+    )
+    p.add_argument(
         "--allow-cloud",
         action="store_true",
         help="Permit editing a dataset that lives on a synced/cloud mount.",
@@ -751,9 +1003,14 @@ def main() -> int:
         find_predictions(root, args.predictions),
         nms_iou=args.nms_iou,
         max_boxes=args.max_boxes,
+        videos=[Path(p) for p in (args.video or [])],
     )
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Label review app serving {root}")
+    if Handler.state.videos:
+        print(f"Video mode: {len(Handler.state.videos)} source video(s)")
+        for v in Handler.state.videos:
+            print(f"  - {v['name']}")
 
     pred_summary = Handler.state.prediction_stats()
     if pred_summary.get("available"):

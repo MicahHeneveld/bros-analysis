@@ -1,0 +1,38 @@
+# Local reviewer setup.
+#
+#   docker compose up
+#   open http://127.0.0.1:8770
+#
+# The dataset is bind-mounted read-write on purpose: the app writes .txt labels
+# into it, and those are what you commit. Nothing is copied into the image, so
+# `git status` shows your review work as normal file changes.
+
+services:
+  review:
+    build:
+      context: .
+    image: ssbu-review:local
+    ports:
+      - "127.0.0.1:8770:8770"
+    volumes:
+      # Change the left side if your dataset lives elsewhere. The right side must
+      # stay /data to match the default --dataset below.
+      - ./data/datasets/ssbu_players:/data
+    command:
+      - "--dataset"
+      - "/data"
+      - "--predictions"
+      - "/data/predictions"
+      - "--port"
+      - "8770"
+    restart: "no"
+
+# Notes
+# -----
+# * Bind to 127.0.0.1, not 0.0.0.0. This is a local tool and the server has no
+#   authentication; publishing it to your LAN is a mistake.
+# * If `data/datasets/ssbu_players/predictions` does not exist, drop the two
+#   --predictions lines. The app still runs, just without the model overlay or
+#   the disagreement ranking.
+# * On Linux, add `user: "${UID:-1000}:${GID:-1000}"` if labels come out owned by
+#   root.

@@ -26,6 +26,27 @@ html, body {
   overflow: hidden;
 }
 
+/* Column layout so the optional bounty bar can appear above the main grid
+   without every downstream height being a calc() guess. */
+body {
+  display: flex;
+  flex-direction: column;
+}
+#topbar { flex: 0 0 48px; }
+/* Expert filters live on their own row so they never squeeze the progress bar. */
+#expertBar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+#expertBar select, #expertBar input { max-width: 230px; }
+#layout { flex: 1 1 auto; min-height: 0; }
+#videoView { flex: 1 1 auto; min-height: 0; }
+
 button, select, input, textarea {
   font: inherit;
   color: var(--fg);
@@ -60,7 +81,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   background: var(--bg-2);
   border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.brand { display: flex; align-items: center; gap: 8px; white-space: nowrap; min-width: 0; flex-shrink: 1; }
+#datasetName { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
 
 .progress { display: flex; align-items: center; gap: 9px; flex: 1; max-width: 420px; }
@@ -79,7 +101,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 #layout {
   display: grid;
   grid-template-columns: 188px 1fr 300px;
-  height: calc(100% - 48px);
+  height: auto;   /* sized by the flex column above, not a magic calc() */
+  min-height: 0;
 }
 
 /* ---------- thumbnail strip ---------- */
@@ -222,6 +245,21 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 .seg.on .seg-count { color: var(--fg); border-color: var(--fg-dim); }
 .seg-count.zero { opacity: .45; }
+.help-section {
+  padding-top: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--fg-dim);
+}
+
+/* Narrow windows otherwise squeeze the stage to a sliver: the side columns are
+   fixed-width and the middle track is the only thing that can shrink. */
+@media (max-width: 1100px) {
+  #layout { grid-template-columns: 132px 1fr 248px; }
+  #searchBox { width: 110px; }
+  #datasetName { max-width: 140px; }
+}
 
 .score-pill {
   font-variant-numeric: tabular-nums;
@@ -353,3 +391,223 @@ kbd {
   font-size: 12px;
 }
 .toast.err { border-color: var(--bad); color: #ffb3ae; }
+
+/* ---------------------------------------------------------------- video mode */
+.mode-switch { margin-left: 14px; flex-shrink: 0; }
+
+#videoView {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  box-sizing: border-box;
+}
+
+#videoTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#videoTop .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+#videoSelect { max-width: 420px; }
+
+#videoStage {
+  position: relative;
+  flex: 1;
+  min-height: 240px;
+  background: #05070a;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#videoEl {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #05070a;
+}
+#videoOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#videoControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#videoSeek { flex: 1; accent-color: var(--accent); }
+#videoTime { font-variant-numeric: tabular-nums; min-width: 92px; }
+#videoFrameInfo { font-variant-numeric: tabular-nums; min-width: 200px; text-align: right; }
+
+/* ==================================================================
+   Roles: one markup tree, two amounts of it visible.
+   CSS (not DOM removal) so every handler stays bound and switching is instant.
+   ================================================================== */
+body.role-review .expert-only { display: none !important; }
+body.role-expert .review-only { display: none !important; }
+
+/* ------------------------------------------------------------------ info "?" */
+.info {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.info:hover { border-color: var(--accent); color: var(--accent); background: rgba(74,158,255,.10); }
+.info[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); background: rgba(74,158,255,.18); }
+
+.block-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.block-head h4 { margin: 0; }
+
+/* ------------------------------------------------------------------ popover */
+.popover {
+  position: fixed;
+  z-index: 70;
+  width: min(340px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 11px 13px 13px;
+  background: var(--bg-2);
+  border: 1px solid #3a4150;
+  border-radius: 9px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
+}
+.popover-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.popover-head strong { flex: 1; font-size: 13px; }
+.popover-body { font-size: 12.5px; color: #c6ccd8; line-height: 1.5; }
+.popover-body p { margin: 0 0 7px; }
+.popover-body p:last-child { margin-bottom: 0; }
+.popover-body kbd {
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+button.icon { padding: 0 6px; line-height: 1.3; }
+
+/* ------------------------------------------------------------------- status */
+.status-pill {
+  display: inline-block;
+  margin: -2px 0 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+.status-pill.good { color: var(--good); border-color: var(--good); background: rgba(53,192,122,.12); }
+.status-pill.bad { color: var(--bad); border-color: var(--bad); background: rgba(229,83,75,.12); }
+.status-pill.empty { color: var(--empty); border-color: var(--empty); background: rgba(122,127,138,.14); }
+.status-pill.unreviewed { color: var(--fg-dim); }
+
+/* Compact box rows for the reviewer view: no coordinate maths on screen. */
+.box-row.compact { display: flex; align-items: center; gap: 7px; padding: 4px 6px; }
+.box-row.compact .box-name { flex: 1; font-size: 12px; }
+.box-row.compact .box-meta { font-size: 11px; }
+.mini { font-size: 11.5px; margin: 6px 0 0; }
+.adopt.full { width: 100%; }
+
+/* Prompt for a reason without adding another element to the page. */
+.chips.needs-reason { outline: 2px dashed rgba(229,83,75,.55); outline-offset: 4px; border-radius: 6px; }
+
+/* ------------------------------------------------------------------- bounty */
+#bountyBar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px;
+  background: linear-gradient(90deg, rgba(74,158,255,.14), rgba(74,158,255,.04));
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.bounty-pill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #06111f;
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+#bountyTitle { font-weight: 600; }
+
+/* -------------------------------------------------------------- walkthrough */
+.tour-overlay { position: fixed; inset: 0; z-index: 80; }
+/* Steps with no target element dim uniformly; the spotlight's huge box-shadow
+   cannot do it because there is no box to cast from. */
+.tour-overlay.no-target::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 12, .72);
+}
+/* A single element with a vast spread shadow dims everything except its box. */
+.tour-spot {
+  position: absolute;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(5, 8, 12, .72), 0 0 0 2px var(--accent);
+  pointer-events: none;
+  transition: all .18s ease;
+}
+.tour-card {
+  position: absolute;
+  width: min(390px, calc(100vw - 20px));
+  padding: 14px 16px 12px;
+  background: var(--bg-2);
+  border: 1px solid #3f4757;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .7);
+}
+.tour-step {
+  font-size: 10.5px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 3px;
+}
+.tour-card h3 { margin: 0 0 7px; font-size: 15px; }
+.tour-body { font-size: 12.5px; line-height: 1.55; color: #c6ccd8; }
+.tour-body kbd {
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 13px; }
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06111f;
+  font-weight: 700;
+}
+button.primary:hover { background: #63aeff; border-color: #63aeff; }
+.zoom-group { display: inline-flex; gap: 4px; }

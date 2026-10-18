@@ -874,6 +874,284 @@ def test_review_store() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_video_mode() -> None:
+    """Video playback depends on three pieces of logic that are easy to break.
+
+    Image ids are built from video filenames, which contain '#', spaces and
+    parentheses. That broke every image in the first ingested dataset, so the
+    slug and the percent-decoding are pinned here. Range parsing is what lets
+    the browser seek instead of downloading a 600 MB file before playing.
+    """
+    print("\n[video mode: slugs, ranges, timeline]")
+    import importlib.util
+
+    import server
+
+    spec = importlib.util.spec_from_file_location(
+        "ingest_video",
+        Path(__file__).resolve().parent.parent / "scripts" / "ingest_video.py",
+    )
+    ingest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ingest)
+
+    # A realistic hostile title: spaces, '#', parentheses, '&'.
+    slug = ingest.slugify("Top 50 Smash Ultimate Players - UltRank 2026.1 #11-20 - Name (1080p)")
+    check("slug has no '#'", "#" not in slug, slug)
+    check("slug has no spaces", " " not in slug, slug)
+    check("slug is URL-safe", all(c.isalnum() or c in "-_" for c in slug), slug)
+    check("slug keeps the useful words", "UltRank_2026_1_11-20" in slug, slug)
+    check("slug is bounded", len(slug) <= 60, str(len(slug)))
+    check(
+        "slug never collapses to nothing",
+        ingest.slugify("###") == "video",
+        ingest.slugify("###"),
+    )
+
+    # Percent-encoded ids must decode back to the on-disk stem.
+    from urllib.parse import quote, unquote
+
+    hostile = "ultrank/Top 50 #11-20 (1080p)_frame_000001"
+    encoded = quote(hostile, safe="/")
+    check("encoded id has no raw '#'", "#" not in encoded, encoded)
+    check("encoded id round-trips", unquote(encoded) == hostile)
+
+    # Range parsing: the video element issues exactly these shapes.
+    size = 1000
+    check("no header means whole file", server.parse_range(None, size) == (0, 999, False))
+    check("open-ended range", server.parse_range("bytes=900-", size) == (900, 999, True))
+    check("bounded range", server.parse_range("bytes=0-99", size) == (0, 99, True))
+    check("suffix range", server.parse_range("bytes=-100", size) == (900, 999, True))
+    check("end past EOF is clamped", server.parse_range("bytes=990-5000", size) == (990, 999, True))
+    check("start at EOF is unsatisfiable", server.parse_range("bytes=1000-", size) is None)
+    check("inverted range is unsatisfiable", server.parse_range("bytes=500-100", size) is None)
+    check("garbage falls back to whole file", server.parse_range("bytes=abc", size) == (0, 999, False))
+
+    tmp = Path(tempfile.mkdtemp(prefix="labelrev-video-"))
+    try:
+        root = tmp / "ds"
+        (root / "labels" / "clip").mkdir(parents=True)
+        (root / "images" / "clip").mkdir(parents=True)
+        preds_dir = root / "predictions"
+        preds_dir.mkdir()
+        video = tmp / "clip.mp4"
+        video.write_bytes(b"not really an mp4")
+
+        # Three kept frames out of a sparse timeline, deliberately out of order
+        # in the file so the timeline has to sort by time.
+        times = {"frame_000003": 6.0, "frame_000001": 2.0, "frame_000002": 4.0}
+        lines = []
+        for stem, t in times.items():
+            image_id = f"clip/{stem}"
+            (root / "images" / f"{image_id}.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+            (root / "labels" / f"{image_id}.txt").write_text(
+                "0 0.250000 0.500000 0.100000 0.200000\n", encoding="utf-8"
+            )
+            lines.append(
+                {
+                    "image_id": image_id,
+                    "width": 1920,
+                    "height": 1080,
+                    "time_s": t,
+                    "frame_index": int(stem.split("_")[-1]),
+                    "source": "clip",
+                    "predictions": [
+                        {"cls": 0, "conf": 0.9, "xc": 0.3, "yc": 0.5, "w": 0.1, "h": 0.2}
+                    ],
+                }
+            )
+        (preds_dir / "clip.jsonl").write_text(
+            "\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8"
+        )
+        (root / "manifest.json").write_text(
+            json.dumps({"sources": {"clip": {"path": str(video), "duration_s": 10.0}}}),
+            encoding="utf-8",
+        )
+
+        state = server.AppState(root, preds_dir)
+        check("manifest video is discovered", len(state.videos) == 1, str(len(state.videos)))
+        if state.videos:
+            check("discovered video name", state.videos[0]["name"] == "clip", state.videos[0]["name"])
+
+        tl = state.video_timeline(0)
+        frames = tl["frames"]
+        check("timeline covers every sample", len(frames) == 3, str(len(frames)))
+        check(
+            "timeline is sorted by time",
+            [f["t"] for f in frames] == [2.0, 4.0, 6.0],
+            str([f["t"] for f in frames]),
+        )
+        check("timeline carries label boxes", len(frames[0]["labels"]) == 1)
+        check("timeline carries model boxes", len(frames[0]["model"]) == 1)
+        check("labels expose cls", frames[0]["labels"][0]["cls"] == 0)
+
+        bad = False
+        try:
+            state.video_timeline(99)
+        except ValueError:
+            bad = True
+        check("out-of-range video index rejected", bad)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_bounty_metadata() -> None:
+    """Bounty points are computed once, at creation, and must round-trip."""
+    print("\n[bounty metadata]")
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import bounty as bounty_mod
+    finally:
+        sys.path.remove(str(scripts))
+
+    meta = {
+        "dataset": "ssbu_players",
+        "split": "train",
+        "target": 250,
+        "filter": {"kind": "unlabelled_player"},
+        "difficulty": 1.31,
+        "points": 328,
+    }
+    body = f"Some prose.\n\n{bounty_mod.dump_meta(meta)}\n"
+    parsed = bounty_mod.parse_meta(body)
+    check("metadata round-trips", parsed == meta, str(parsed))
+    check("prose is not metadata", bounty_mod.parse_meta("just text") is None)
+    check("broken JSON is ignored",
+          bounty_mod.parse_meta("<!-- bounty: {nope} -->") is None)
+
+    # The HTML comment must stay invisible when GitHub renders the issue.
+    check("metadata is an HTML comment",
+          bounty_mod.dump_meta(meta).startswith("<!--")
+          and bounty_mod.dump_meta(meta).endswith("-->"))
+
+    # Points round outward: a bounty is never worth less than advertised.
+    check("points round up", bounty_mod.points_for(250, 1.31) == 328,
+          str(bounty_mod.points_for(250, 1.31)))
+    check("points round up on .001", bounty_mod.points_for(100, 1.001) == 101,
+          str(bounty_mod.points_for(100, 1.001)))
+
+    tmp = Path(tempfile.mkdtemp(prefix="bounty-"))
+    try:
+        # A dataset with no non-empty labels is a bootstrap job, not a review
+        # job; the bounty body has to say so or it misdescribes the work.
+        ds = tmp / "ds"
+        (ds / "labels" / "train").mkdir(parents=True)
+        (ds / "images" / "train").mkdir(parents=True)
+        for name in ("a", "b"):
+            (ds / "labels" / "train" / f"{name}.txt").write_text("")
+        check("empty dataset counts as unlabelled",
+              bounty_mod.labelled_frames(ds) == 0, str(bounty_mod.labelled_frames(ds)))
+
+        (ds / "labels" / "train" / "a.txt").write_text("0 0.5 0.5 0.2 0.2\n")
+        check("one labelled frame detected",
+              bounty_mod.labelled_frames(ds) == 1, str(bounty_mod.labelled_frames(ds)))
+
+        check("missing labels dir is unlabelled",
+              bounty_mod.labelled_frames(tmp / "nope") == 0)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    tmp = Path(tempfile.mkdtemp(prefix="bounty-"))
+    try:
+        # Confident, single-detection frames are easy; empty and weak frames are
+        # not, and the multiplier has to reflect that.
+        easy = tmp / "easy.jsonl"
+        easy.write_text("\n".join(
+            json.dumps({"predictions_clean": [{"conf": 0.97}] * 2}) for _ in range(4)
+        ) + "\n")
+        hard = tmp / "hard.jsonl"
+        hard.write_text("\n".join(
+            json.dumps({"predictions_clean": []}) for _ in range(4)
+        ) + "\n")
+
+        d_easy = bounty_mod.slice_difficulty(easy, 4)
+        d_hard = bounty_mod.slice_difficulty(hard, 4)
+        check("confident slice is cheap", d_easy < 1.2, str(d_easy))
+        check("empty slice costs more", d_hard > d_easy, f"{d_hard} vs {d_easy}")
+        check("difficulty stays bounded", 1.0 <= d_hard <= 2.0, str(d_hard))
+        check("missing predictions -> neutral", bounty_mod.slice_difficulty(None, 10) == 1.0)
+        check("missing file -> neutral",
+              bounty_mod.slice_difficulty(tmp / "nope.jsonl", 10) == 1.0)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_image_bundle_extraction() -> None:
+    """Bundles are zipped inconsistently; extraction must flatten either shape.
+
+    Both bug shapes this guards against were real: unpack_archive returns None
+    (so a truthiness check silently aborted every fetch), and a wrapping folder
+    was reproduced under images/ instead of being stripped.
+    """
+    print("\n[image bundle extraction]")
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import bounty as bounty_mod
+    finally:
+        sys.path.remove(str(scripts))
+
+    tmp = Path(tempfile.mkdtemp(prefix="bundle-"))
+    try:
+        def make(root: Path, layout: str) -> Path:
+            base = root / layout
+            base.mkdir(parents=True)
+            for name in ("a.jpg", "b.png"):
+                (base / name).write_bytes(b"not-a-real-image")
+            return base
+
+        # Shape 1: archive root holds images/ directly.
+        flat_root = tmp / "flat"
+        make(flat_root, "images")
+        found = bounty_mod._images_root(flat_root)
+        check("bare images/ found", found == flat_root / "images", str(found))
+
+        # Shape 2: dataset/images/ one level down.
+        nested_root = tmp / "nested"
+        make(nested_root, "ds/images")
+        found = bounty_mod._images_root(nested_root)
+        check("nested ds/images found", found == nested_root / "ds" / "images", str(found))
+
+        # Shape 3: extra wrapper (bundle/ds/images), as produced by `zip -r`.
+        wrapped_root = tmp / "wrapped"
+        make(wrapped_root, "bundle/ds/images")
+        found = bounty_mod._images_root(wrapped_root)
+        check("wrapped bundle/.../images found",
+              found == wrapped_root / "bundle" / "ds" / "images", str(found))
+
+        # Shape 4: splits under images/. The `images` dir itself holds no files,
+        # but it is still the dataset root — flattening it would destroy splits.
+        split_root = tmp / "split"
+        (split_root / "images" / "train").mkdir(parents=True)
+        (split_root / "images" / "train" / "a.jpg").write_bytes(b"x")
+        found = bounty_mod._images_root(split_root)
+        check("images/ with split subdir is the root", found == split_root / "images", str(found))
+
+        split_dest = tmp / "splitout" / "images"
+        bounty_mod._copy_tree(found, split_dest)
+        check("split directory preserved",
+              (split_dest / "train" / "a.jpg").exists(),
+              str(sorted(p.name for p in split_dest.rglob("*"))))
+
+        # Non-image files must not be mistaken for the image root.
+        junk = tmp / "junk"
+        (junk / "docs").mkdir(parents=True)
+        (junk / "docs" / "readme.txt").write_text("hi")
+        check("no images -> None", bounty_mod._images_root(junk) is None)
+
+        # Copying flattens into dest, so labels/ and images/ stay siblings.
+        dest = tmp / "out" / "images"
+        n = bounty_mod._copy_tree(wrapped_root / "bundle" / "ds" / "images", dest)
+        check("copied both files", n == 2, str(n))
+        check("landed flat in dest",
+              (dest / "a.jpg").exists() and (dest / "b.png").exists(),
+              str(sorted(p.name for p in dest.iterdir())))
+        check("no nested wrapper under dest",
+              not (dest / "bundle").exists(), str(sorted(p.name for p in dest.iterdir())))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     print("Running label review app self-tests")
     test_parse_basic()
@@ -892,6 +1170,9 @@ def main() -> int:
     test_sample_sorting()
     test_store_save_and_undo()
     test_review_store()
+    test_video_mode()
+    test_bounty_metadata()
+    test_image_bundle_extraction()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0
 

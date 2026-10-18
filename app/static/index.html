@@ -4,9 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>SSBU Label Review</title>
-<link rel="stylesheet" href="/style.css?v=8" />
+<link rel="stylesheet" href="/style.css?v=23" />
 </head>
-<body>
+<body class="role-review">
+
 <header id="topbar">
   <div class="brand">
     <span class="dot"></span>
@@ -14,53 +15,83 @@
     <span id="datasetName" class="muted"></span>
   </div>
 
-  <div class="progress" title="Review progress">
+  <span id="appMode" class="segmented mode-switch" role="group" aria-label="Review mode">
+    <button type="button" class="seg on" data-mode="labels" data-appmode="images">Images</button>
+    <button type="button" class="seg" data-mode="model" data-appmode="video">Video</button>
+  </span>
+
+  <div class="progress" id="progressWrap">
     <div class="bar"><div id="progressFill"></div></div>
     <span id="progressText" class="muted">0 / 0 reviewed</span>
+    <button class="info" data-help="progress" aria-label="What counts as reviewed">?</button>
   </div>
 
   <div class="controls">
-    <select id="splitFilter">
-      <option value="all">All splits</option>
-      <option value="train">train</option>
-      <option value="val">val</option>
-      <option value="test">test</option>
-    </select>
-    <select id="statusFilter">
-      <option value="all">All statuses</option>
-      <option value="unreviewed">Unreviewed</option>
-      <option value="good">Good</option>
-      <option value="bad">Bad</option>
-      <option value="empty">Reviewed empty</option>
-    </select>
-    <select id="sortFilter" title="Order of the thumbnail strip">
-      <option value="unreviewed">Sort: unreviewed first</option>
-      <option value="name">Sort: filename</option>
-      <option value="disagreement">Sort: worst disagreement</option>
-      <option value="agreement">Sort: best agreement</option>
-    </select>
-    <select id="kindFilter" hidden title="Filter by model/label disagreement type">
-      <option value="all">All disagreements</option>
-      <option value="unlabelled_player">Unlabelled player — a box is probably missing</option>
-      <option value="unfound_label">Label not found — model missed this box</option>
-      <option value="duplicate">Duplicate (model double-fire)</option>
-      <option value="weak_iou">Loose box fit</option>
-      <option value="low_conf_extra">Low-confidence extra</option>
-      <option value="agree">Full agreement</option>
-    </select>
-    <select id="flagFilter" title="Filter by label hygiene">
-      <option value="all">All labels</option>
-      <option value="inconsistent">Flagged (marked empty, has boxes)</option>
-      <option value="conflicting">Re-check (flagged missing box, model can't find one)</option>
-      <option value="over_labelled">Over-labelled (&gt;2 boxes)</option>
-      <option value="no_labels">No labels</option>
-      <option value="malformed">Malformed</option>
-    </select>
-    <input id="searchBox" type="search" placeholder="filter by filename…" />
-    <span id="saveState" class="save-state">saved</span>
+    <span id="saveState" class="save-state" title="Autosave status">saved</span>
+
+    <span id="roleSwitch" class="segmented" role="group" aria-label="Interface detail level">
+      <button type="button" class="seg on" data-role="review"
+              title="Simple: just judge frames and fix boxes">Review</button>
+      <button type="button" class="seg" data-role="expert"
+              title="Everything: filters, metrics, journal, backup tools">Expert</button>
+    </span>
+
     <button id="helpBtn" class="ghost" title="Keyboard shortcuts (?)">?</button>
   </div>
 </header>
+
+<!-- Power-user filters. Their own row so they never squeeze the progress bar. -->
+<div id="expertBar" class="expert-only">
+  <span class="seg-label">Queue</span>
+  <select id="splitFilter" title="Which split to review">
+    <option value="all">All splits</option>
+    <option value="train">train</option>
+    <option value="val">val</option>
+    <option value="test">test</option>
+  </select>
+  <select id="statusFilter" title="Which review states to show">
+    <option value="all">All statuses</option>
+    <option value="unreviewed">Unreviewed</option>
+    <option value="good">Good</option>
+    <option value="bad">Bad</option>
+    <option value="empty">Reviewed empty</option>
+  </select>
+  <select id="sortFilter" title="Order of the thumbnail strip">
+    <option value="unreviewed">Sort: unreviewed first</option>
+    <option value="name">Sort: filename</option>
+    <option value="disagreement">Sort: worst disagreement</option>
+    <option value="agreement">Sort: best agreement</option>
+  </select>
+  <select id="kindFilter" hidden title="Filter by model/label disagreement type">
+    <option value="all">All disagreements</option>
+    <option value="unlabelled_player">Unlabelled player — a box is probably missing</option>
+    <option value="unfound_label">Label not found — model missed this box</option>
+    <option value="duplicate">Duplicate (model double-fire)</option>
+    <option value="weak_iou">Loose box fit</option>
+    <option value="low_conf_extra">Low-confidence extra</option>
+    <option value="agree">Full agreement</option>
+  </select>
+  <select id="flagFilter" title="Filter by label hygiene">
+    <option value="all">All labels</option>
+    <option value="inconsistent">Flagged (marked empty, has boxes)</option>
+    <option value="conflicting">Re-check (flagged missing box, model can't find one)</option>
+    <option value="over_labelled">Over-labelled (&gt;2 boxes)</option>
+    <option value="no_labels">No labels</option>
+    <option value="malformed">Malformed</option>
+  </select>
+  <input id="searchBox" type="search" placeholder="filter by filename…" />
+  <span class="spacer"></span>
+  <button class="info" data-help="disagreement" aria-label="What the disagreement score means">?</button>
+</div>
+
+<!-- Shown only when a bounty is loaded (see ?bounty= or the bounty CLI). -->
+<div id="bountyBar" hidden>
+  <span class="bounty-pill">Bounty</span>
+  <strong id="bountyTitle"></strong>
+  <span id="bountyProgress" class="muted"></span>
+  <span class="spacer"></span>
+  <button id="tourBtn" class="ghost">How this works</button>
+</div>
 
 <main id="layout">
   <aside id="strip" aria-label="Image thumbnails">
@@ -83,104 +114,181 @@
       <span id="viewToggleWrap" class="view-toggle-wrap" hidden>
         <span class="seg-label">Show</span>
         <span id="viewToggle" class="segmented" role="group" aria-label="Which boxes to show">
-          <button type="button" class="seg" data-mode="labels"
-                  title="Show only your labels — editable">
-            Labels<span class="seg-count" id="countLabels">0</span>
-          </button>
-          <button type="button" class="seg" data-mode="model"
-                  title="Show only the model's predictions — read-only">
-            Model<span class="seg-count" id="countModel">0</span>
-          </button>
-          <button type="button" class="seg" data-mode="both"
-                  title="Overlay both — edit labels and adopt predictions">
-            Both<span class="seg-count" id="countBoth">0</span>
-          </button>
+          <button type="button" class="seg" data-mode="labels">Labels<span class="seg-count" id="countLabels">0</span></button>
+          <button type="button" class="seg" data-mode="model">Model<span class="seg-count" id="countModel">0</span></button>
+          <button type="button" class="seg" data-mode="both">Both<span class="seg-count" id="countBoth">0</span></button>
         </span>
+        <button class="info" data-help="viewModes" aria-label="What the Labels / Model / Both switch does">?</button>
       </span>
-      <span id="uiVersion" class="ui-version" title="UI build — if this is missing or older than expected, hard-reload the page">v8</span>
-      <button id="zoomOut" class="ghost">−</button>
-      <button id="zoomReset" class="ghost">100%</button>
-      <button id="zoomIn" class="ghost">+</button>
-      <button id="fitBtn" class="ghost">Fit</button>
-      <button id="drawBtn" class="ghost">New box (d)</button>
+      <span id="uiVersion" class="ui-version expert-only">v13</span>
+      <span class="expert-only zoom-group">
+        <button id="zoomOut" class="ghost">−</button>
+        <button id="zoomReset" class="ghost">100%</button>
+        <button id="zoomIn" class="ghost">+</button>
+        <button id="fitBtn" class="ghost">Fit</button>
+      </span>
+      <button id="drawBtn" class="ghost" title="Draw a new box (d)">New box</button>
     </div>
   </section>
 
   <aside id="panel">
     <h3 id="panelTitle">No image</h3>
+    <div id="statusPill" class="status-pill" hidden></div>
 
-    <div class="block">
+    <!-- The only thing a reviewer must do: decide. -->
+    <div class="block" id="decideBlock">
+      <div class="block-head">
+        <h4>Is this frame correct?</h4>
+        <button class="info" data-help="decide" aria-label="How to judge a frame">?</button>
+      </div>
       <div class="row">
         <button id="markGood" class="good">Good (g)</button>
         <button id="markEmpty" class="empty">Empty (n)</button>
       </div>
-      <button id="markBad" class="bad full">Bad (b)</button>
-      <div id="reasonChips" class="chips"></div>
-      <textarea id="noteBox" placeholder="Note (why is this bad?)"></textarea>
+      <button id="markBad" class="bad full">Needs fixing (b)</button>
+      <!-- Reasons and the note only matter once a frame is marked bad. -->
+      <div id="badDetail" hidden>
+        <div id="reasonChips" class="chips"></div>
+        <textarea id="noteBox" placeholder="Optional note…" aria-label="Optional note"></textarea>
+      </div>
     </div>
 
-    <div class="block" id="predBlock" hidden>
-      <div class="row space-between">
-        <h4>Model vs labels</h4>
-        <span id="disagreeScore" class="score-pill">0.00</span>
+    <!-- Model suggests boxes you have not labelled. One click to accept. -->
+    <div class="block" id="fixBlock" hidden>
+      <div class="block-head">
+        <h4>Suggested <span id="fixCount" class="muted"></span></h4>
+        <button class="info" data-help="adopt" aria-label="What adopting a suggestion does">?</button>
       </div>
-      <div id="predMetrics" class="metrics"></div>
-      <p id="predHint" class="hint"></p>
-      <button id="adoptBtn" class="ghost adopt" hidden>Adopt missing</button>
-      <p id="predClean" class="hint"></p>
+      <button id="adoptBtn" class="adopt full" hidden>Adopt missing boxes</button>
+      <p id="fixNote" class="mini muted"></p>
     </div>
 
     <div class="block">
-      <div class="row space-between">
+      <div class="block-head">
         <h4>Boxes <span id="boxCount" class="muted">0</span></h4>
-        <div>
-          <button id="saveBtn" class="ghost">Save (⌘S)</button>
-          <button id="undoBtn" class="ghost">Undo (⌘Z)</button>
-        </div>
+        <button class="info" data-help="boxes" aria-label="How to edit boxes">?</button>
       </div>
       <div id="boxList" class="box-list"></div>
-      <button id="addBoxBtn" class="ghost full">+ Add box</button>
+      <div class="row">
+        <button id="addBoxBtn" class="ghost">+ Add box</button>
+        <span class="spacer"></span>
+        <button id="undoBtn" class="ghost expert-only">Undo</button>
+        <button id="saveBtn" class="ghost expert-only">Save</button>
+      </div>
     </div>
 
-    <div class="block" id="warnBlock" hidden>
+    <!-- ------------- expert-only detail ------------- -->
+    <div class="block expert-only" id="predBlock" hidden>
+      <div class="block-head">
+        <h4>Model vs labels</h4>
+        <span id="disagreeScore" class="score-pill">0.00</span>
+        <button class="info" data-help="disagreement" aria-label="What the disagreement score means">?</button>
+      </div>
+      <div id="predMetrics" class="metrics"></div>
+    </div>
+
+    <div class="block expert-only" id="warnBlock" hidden>
       <h4>Warnings</h4>
       <ul id="warnList"></ul>
     </div>
 
-    <div class="block">
+    <div class="block expert-only">
       <h4>Journal <span class="muted">last 10 edits</span></h4>
       <ul id="journalList" class="journal"></ul>
     </div>
   </aside>
 </main>
 
+<section id="videoView" hidden>
+  <div id="videoTop">
+    <select id="videoSelect" title="Which source video to play"></select>
+    <span id="videoInfo" class="muted"></span>
+    <span class="spacer"></span>
+    <span class="seg-label">Show</span>
+    <span id="videoViewToggle" class="segmented" role="group" aria-label="Which boxes to show">
+      <button type="button" class="seg" data-mode="labels" data-vmode="labels">Labels</button>
+      <button type="button" class="seg on" data-mode="both" data-vmode="both">Both</button>
+      <button type="button" class="seg" data-mode="model" data-vmode="model">Model</button>
+    </span>
+    <label class="check"><input type="checkbox" id="videoFollowFrame" checked />
+      Follow sampled frames</label>
+    <button class="info" data-help="videoFrames" aria-label="Why the overlay disappears">?</button>
+  </div>
+
+  <div id="videoStage">
+    <video id="videoEl" playsinline preload="metadata"></video>
+    <canvas id="videoOverlay"></canvas>
+    <div id="videoEmpty" class="empty-note" hidden></div>
+  </div>
+
+  <div id="videoControls">
+    <button id="videoPlay" class="ghost" title="Play / pause (space)">Play</button>
+    <input id="videoSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+    <span id="videoTime" class="muted">0:00 / 0:00</span>
+    <button id="videoPrev" class="ghost" title="Previous sampled frame (←)">‹ frame</button>
+    <button id="videoNext" class="ghost" title="Next sampled frame (→)">frame ›</button>
+    <span id="videoFrameInfo" class="muted"></span>
+  </div>
+</section>
+
+<!-- ================= help ================= -->
 <div id="helpOverlay" class="overlay" hidden>
   <div class="modal">
     <h3>Keyboard shortcuts</h3>
     <table>
       <tr><td><kbd>j</kbd> / <kbd>k</kbd> or <kbd>←</kbd> / <kbd>→</kbd></td><td>next / previous image</td></tr>
       <tr><td><kbd>u</kbd></td><td>next unreviewed image</td></tr>
-      <tr><td><kbd>g</kbd></td><td>mark good</td></tr>
-      <tr><td><kbd>b</kbd></td><td>focus bad, then reason keys</td></tr>
-      <tr><td><kbd>n</kbd></td><td>mark reviewed empty (background)</td></tr>
-      <tr><td><kbd>d</kbd></td><td>toggle draw-new-box mode</td></tr>
-      <tr><td><kbd>Delete</kbd></td><td>delete selected box</td></tr>
+      <tr><td><kbd>g</kbd></td><td>good</td></tr>
+      <tr><td><kbd>b</kbd></td><td>needs fixing, then <kbd>1</kbd>–<kbd>6</kbd> for a reason</td></tr>
+      <tr><td><kbd>n</kbd></td><td>not gameplay (empty background)</td></tr>
+      <tr><td><kbd>a</kbd></td><td>adopt the model's missing boxes</td></tr>
+      <tr><td><kbd>d</kbd></td><td>draw a new box</td></tr>
+      <tr><td><kbd>p</kbd></td><td>cycle Labels → Model → Both</td></tr>
+      <tr><td><kbd>Delete</kbd></td><td>delete the selected box</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>deselect / cancel draw</td></tr>
+      <tr><td><kbd>?</kbd></td><td>this dialog</td></tr>
+      <tr><td colspan="2" class="help-section">Video mode</td></tr>
+      <tr><td><kbd>space</kbd></td><td>play / pause</td></tr>
+      <tr><td><kbd>→</kbd> / <kbd>←</kbd></td><td>next / previous sampled frame</td></tr>
+      <tr><td colspan="2" class="help-section">Experts only</td></tr>
       <tr><td><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></td><td>undo / redo</td></tr>
-      <tr><td><kbd>⌘S</kbd></td><td>save now</td></tr>
-      <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>toggle reason when marking bad</td></tr>
-      <tr><td><kbd>?</kbd></td><td>this overlay</td></tr>
-      <tr><td><kbd>p</kbd></td><td>cycle view: Labels → Model → Both</td></tr>
-      <tr><td>click <kbd>Show</kbd></td><td>switch which boxes are drawn (counts shown per mode)</td></tr>
-      <tr><td><kbd>a</kbd></td><td>adopt confident unlabelled predictions</td></tr>
-      <tr><td>click</td><td>click a dashed box to adopt it as a label</td></tr>
+      <tr><td><kbd>⌘S</kbd></td><td>save now (normally automatic)</td></tr>
     </table>
-    <button id="closeHelp" class="ghost">Close</button>
+    <div class="row">
+      <button id="replayTour" class="ghost">Replay the walkthrough</button>
+      <span class="spacer"></span>
+      <button id="closeHelp" class="ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Contextual help popover, anchored to the "?" that opened it. -->
+<div id="popover" class="popover" hidden>
+  <div class="popover-head">
+    <strong id="popoverTitle"></strong>
+    <button id="popoverClose" class="ghost icon" aria-label="Close">×</button>
+  </div>
+  <div id="popoverBody" class="popover-body"></div>
+</div>
+
+<!-- ================= guided walkthrough ================= -->
+<div id="tourOverlay" class="tour-overlay" hidden>
+  <div id="tourSpot" class="tour-spot"></div>
+  <div id="tourCard" class="tour-card">
+    <div id="tourStepLabel" class="tour-step"></div>
+    <h3 id="tourTitle"></h3>
+    <div id="tourBody" class="tour-body"></div>
+    <div class="tour-actions">
+      <button id="tourSkip" class="ghost">Skip</button>
+      <span class="spacer"></span>
+      <button id="tourBack" class="ghost">Back</button>
+      <button id="tourNext" class="primary">Next</button>
+    </div>
   </div>
 </div>
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="/app.js?v=8"></script>
+<script src="/app.js?v=23"></script>
 </body>
 </html>

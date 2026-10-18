@@ -157,3 +157,50 @@ about 18,000 sampled frames, so budget 10–20 minutes.
   zoomed combo clips that would still be useful training data. For a montage,
   either accept the loss (~33% of frames survived on the UltRank test video) or
   run a second pass with `--min-players 1` into a separate output directory.
+
+## Reviewing a video: the two modes
+
+The review app (`app/server.py`) has two modes, switchable from the header. The
+choice is remembered in `localStorage`, and `?mode=video` opens straight into it.
+
+**Images** — the original frame-by-frame queue. Each kept frame is a still you
+can edit, mark good/bad, and step through with `j`/`k`.
+
+**Video** — plays the source MP4 with the dataset's boxes drawn over it. This is
+the only way to judge the ingest end to end: you see what the frames look like in
+motion, where sampling dropped out, and whether a box that looked fine as a still
+is tracking the right fighter.
+
+The player does not re-run inference. It replays the timeline already on disk:
+
+- `GET /api/videos` lists source videos. They are discovered from the dataset's
+  `manifest.json` (`sources[*].path`), so an ingested dataset needs no extra
+  flags. `--video <file>` adds one for a hand-built dataset. Only registered
+  videos are ever streamed, so a client cannot request an arbitrary file.
+- `GET /api/video/<n>` streams the MP4 with HTTP `Range` support. Without it the
+  browser will not scrub.
+- `GET /api/video/<n>/timeline` returns every kept frame with its `time_s` and
+  both box sets. One request, ~0.6 MB for 1,650 frames.
+
+### Why boxes disappear
+
+Sampling is sparse and menus are gated out, so the box overlay is driven by the
+nearest kept frame and hidden once the playhead is more than one sampling
+interval away (bounded to 0.2–0.6 s). On this dataset that means ~0.2 s coverage,
+which is contiguous during gameplay and blank during the ~20 s menu gaps. An
+empty overlay therefore means "this dataset has no frame here", not "the model
+found nothing".
+
+Untick **Follow sampled frames** to hold the nearest box regardless of distance;
+useful when scrubbing quickly, misleading over a menu.
+
+### Filename safety
+
+Ingested frame names come from the video's title, which may contain `#`, spaces
+and parentheses, and an unencoded `#` truncates a URL at the fragment. That broke
+every image in the first ingested dataset ("failed load, unknown image"). Two
+fixes, both pinned in `app/selftest.py`:
+
+1. `slugify()` in the ingest writes `[A-Za-z0-9_-]` frame names.
+2. The server percent-decodes request paths, and the frontend `encodeURIComponent`s
+   each id segment, so already-ingested datasets with hostile names keep working.
