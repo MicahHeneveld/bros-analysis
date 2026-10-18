@@ -207,7 +207,7 @@ app/
   label_io.py                # YOLO parse/serialize, atomic writes, journal, backups
   review_store.py            # review status, reasons, notes, progress
   server.py                  # stdlib HTTP server: API + static + thumbnails
-  selftest.py                # 356 assertions, no test framework needed
+  selftest.py                # 361 assertions, no test framework needed
   static/                    # index.html, style.css, app.js (canvas editor)
 scripts/
   ingest_video.py            # MP4 → every sampled frame + pre-labels, ready to review
