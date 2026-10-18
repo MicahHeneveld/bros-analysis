@@ -140,6 +140,9 @@ rather than from a scoreboard anyone could poke.
 
 ## Pipeline contributors
 
+You do not need the private Drive folder. Everything below runs from a clean
+clone; the full walkthrough is in [pipeline.md](pipeline.md).
+
 ### Prerequisites
 
 ```bash
@@ -147,21 +150,39 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For training you also want a GPU-enabled environment (`torch` with CUDA/MPS) and
-`ffmpeg` on your `PATH`.
+For training you also want a GPU-enabled environment (`torch` with CUDA/MPS),
+`ffmpeg` on your `PATH`, and `ultralytics` installed. The review app itself needs
+only the standard library.
 
 ### Common tasks
 
 ```bash
-# Stage a dataset for review without touching the real one
-python scripts/stage_dataset.py --help
+# Get the player detector (published release, not in git)
+python scripts/bounty.py fetch --models
 
-# Ingest an MP4 into sampled frames + labels
-python scripts/ingest_video.py --help
+# Ingest an MP4 into sampled frames + model predictions
+python scripts/ingest_video.py match.mp4
 
-# Predict, review, then sync reviewed labels back
-python scripts/sync_labels.py --help
+# Review it, then split reviewed labels into a train/val dataset
+python app/server.py --dataset .staging/ingested/match \
+                     --predictions .staging/ingested/match/predictions
+python scripts/split_dataset.py data/datasets/<name>
+
+# Train, evaluate, publish
+python scripts/train_ssbu.py --root .staging/train --dataset <name> \
+    --name smash_player_colab_v5 --epochs 50
+python scripts/compare_runs.py --runs smash_player_colab_v4 smash_player_colab_v5
+python scripts/bounty.py publish-models --run-name smash_player_colab_v5
 ```
+
+Two rules that matter more than they look:
+
+- **Never train on unreviewed frames.** `split_dataset.py` skips frames with no
+  label file. Do not work around it by creating empty label files — that tells the
+  model "no players here" about frames nobody checked.
+- **Never commit model weights or image bundles.** Weights go in a `models-*`
+  release, images in an `images-*` release. Git holds labels, predictions and
+  metadata.
 
 ### Changing the review app
 

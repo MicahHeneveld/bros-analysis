@@ -1164,6 +1164,130 @@ def test_image_bundle_extraction() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_split_dataset() -> None:
+    """Splitting must not leak near-duplicate frames, or train on the backlog.
+
+    Both are silent failures otherwise: leakage inflates val numbers, and an
+    unreviewed frame is indistinguishable from a labelled background frame once
+    it has an empty label file.
+    """
+    print("\n[dataset split]")
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import split_dataset as sd
+    finally:
+        sys.path.remove(str(scripts))
+
+    # A dot inside the video title must not truncate the timestamp key. This was
+    # a real bug: frames.csv ids have no extension, so Path.stem cut at "2026.1"
+    # and every frame collapsed onto one key.
+    check(
+        "stem survives dots in the video title",
+        sd._stem_of("m1/Top 50 UltRank 2026.1 #11-20_frame_002844")
+        == "Top 50 UltRank 2026.1 #11-20_frame_002844",
+        sd._stem_of("m1/Top 50 UltRank 2026.1 #11-20_frame_002844"),
+    )
+    check(
+        "stem strips a real image extension",
+        sd._stem_of("m1/a_frame_000010.JPG") == "a_frame_000010",
+        sd._stem_of("m1/a_frame_000010.JPG"),
+    )
+
+    tmp = Path(tempfile.mkdtemp(prefix="split-"))
+    try:
+        root = tmp / "ds"
+        (root / "images" / "m1").mkdir(parents=True)
+        (root / "labels" / "m1").mkdir(parents=True)
+        rows = ["image_id,frame_index,time_s"]
+        for i in range(40):
+            stem = f"m1_frame_{i * 3:06d}"
+            (root / "images" / "m1" / f"{stem}.jpg").write_bytes(b"x")
+            # Every 4th frame is unreviewed (no label file at all).
+            if i % 4:
+                (root / "labels" / "m1" / f"{stem}.txt").write_text("")
+            rows.append(f"m1/{stem},{i * 3},{i * 0.2}")
+        (root / "frames.csv").write_text("\n".join(rows) + "\n")
+
+        times = sd.load_times(root)
+        check("every timestamp loads", len(times) == 40, str(len(times)))
+
+        frames, stats = sd.collect_frames(root)
+        check("unreviewed frames are skipped", len(frames) == 30, str(len(frames)))
+        check("skipped count is reported", stats["unreviewed"] == 10, str(stats))
+        check("empty labels are kept", all(f.label.exists() for f in frames))
+
+        blocks = sd.make_blocks(frames, block=10, max_gap=2.0)
+        check("blocks cap at the block size", max(len(b) for b in blocks) <= 10,
+              str([len(b) for b in blocks]))
+        check("frames in a block are contiguous",
+              all(
+                  all(b[i].order < b[i + 1].order for i in range(len(b) - 1))
+                  for b in blocks
+              ))
+
+        side = sd.assign(blocks, 0.25, seed=0)
+        check("both sides populated", "train" in side and "val" in side, str(side))
+        check("same seed is deterministic", side == sd.assign(blocks, 0.25, seed=0))
+
+        kept = sd.apply_guard(blocks, side, guard=2)
+        check("guard drops frames", len(kept) > 0, str(len(kept)))
+        check("guarded split has no adjacent cross-split pairs",
+              sd.count_cross_split_neighbours(blocks, side, kept) == 0,
+              str(sd.count_cross_split_neighbours(blocks, side, kept)))
+        check("unguarded split can leak",
+              sd.count_cross_split_neighbours(blocks, side, set()) >= 0)
+
+        yaml = sd.data_yaml_text(root)
+        check("data.yaml points at train/val",
+              "train: images/train" in yaml and "val: images/val" in yaml, yaml)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_model_paths() -> None:
+    """A base checkpoint must never be mistaken for the trained detector."""
+    print("\n[model paths]")
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import model_paths as mp
+    finally:
+        sys.path.remove(str(scripts))
+
+    check("yolo11n is a base model", mp.is_base_model("yolo11n"))
+    check("a run name is not a base model",
+          not mp.is_base_model("smash_player_colab_v4"))
+    check("explicit missing path fails loudly", _raises(
+        lambda: mp.resolve_weights(Path("/nope/best.pt")), mp.WeightsNotFound))
+
+    tmp = Path(tempfile.mkdtemp(prefix="models-"))
+    try:
+        (tmp / "models").mkdir()
+        (tmp / "models" / "yolo11n.pt").write_bytes(b"x")
+        (tmp / "models" / "smash_player_colab_v4.pt").write_bytes(b"x")
+        saved_root, saved_dir = mp.REPO_ROOT, mp.MODELS_DIR
+        mp.REPO_ROOT, mp.MODELS_DIR = tmp, tmp / "models"
+        try:
+            found = mp.resolve_weights(None, None, None)
+            check("published checkpoint wins over the base model",
+                  found.name == "smash_player_colab_v4.pt", found.name)
+        finally:
+            mp.REPO_ROOT, mp.MODELS_DIR = saved_root, saved_dir
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _raises(fn, exc_type) -> bool:
+    try:
+        fn()
+    except exc_type:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def main() -> int:
     print("Running label review app self-tests")
     test_parse_basic()
@@ -1185,6 +1309,8 @@ def main() -> int:
     test_video_mode()
     test_bounty_metadata()
     test_image_bundle_extraction()
+    test_split_dataset()
+    test_model_paths()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0
 

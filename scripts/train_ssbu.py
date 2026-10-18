@@ -139,6 +139,8 @@ def sync_run_to_drive(local_run: Path, drive_run: Path, trainer=None) -> None:
             continue
         dst = drive_run / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.resolve() == src.resolve():
+            continue
         shutil.copy2(src, dst)
     epoch = getattr(trainer, "epoch", None)
     label = f"epoch {epoch + 1}" if isinstance(epoch, int) else "end"
@@ -165,7 +167,7 @@ def ensure_data_yaml(data_yaml: Path, dataset_dir: Path) -> None:
 
 def main() -> None:
     args = parse_args()
-    root: Path = args.root.expanduser()
+    root: Path = args.root.expanduser().resolve()
     dataset = root / args.dataset
     data_yaml = dataset / "data.yaml"
 

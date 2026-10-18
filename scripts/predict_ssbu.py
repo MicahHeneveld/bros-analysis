@@ -42,6 +42,7 @@ if not (_HERE / "predictions.py").exists():
 
 from train_ssbu import DEFAULT_COLAB_ROOT, ensure_ultralytics, stage_dataset  # noqa: E402
 from predictions import MAX_BOXES, NMS_IOU, postprocess  # noqa: E402
+import model_paths  # noqa: E402
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -125,10 +126,12 @@ def main() -> int:
     args = parse_args()
     root = args.root.expanduser()
 
-    weights = args.weights or (root / "runs" / args.run_name / "weights" / "best.pt")
-    if not weights.exists():
-        print(f"ERROR: weights not found: {weights}")
-        print("Train first, or pass --weights / --run-name.")
+    try:
+        weights = model_paths.resolve_weights(
+            explicit=args.weights, run_name=args.run_name, root=root,
+        )
+    except model_paths.WeightsNotFound as exc:
+        print(f"ERROR: {exc}")
         return 2
 
     dataset_dir = root / args.dataset

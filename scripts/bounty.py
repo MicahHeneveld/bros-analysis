@@ -138,12 +138,12 @@ def find_predictions(dataset: Path) -> Path | None:
     return None
 
 
-def release_assets() -> list[dict]:
-    """Images are published as release assets, so pulling them needs no auth.
+def release_assets(prefix: str = "images-") -> list[dict]:
+    """Assets published as releases, so pulling them needs no auth.
 
-    Tag convention: `images-<dataset>`. Anything else in the release list is
-    ignored, so a release can also hold model weights or notes without confusing
-    the fetch.
+    Tag conventions: `images-<dataset>` for frames, `models-<run>` for
+    checkpoints. Anything else in the release list is ignored, so a release can
+    also hold notes or other artifacts without confusing these fetches.
 
     Note: `gh release list` cannot return assets (only metadata), so each
     candidate tag needs a second `gh release view` call. There are normally only
@@ -151,7 +151,15 @@ def release_assets() -> list[dict]:
     """
     try:
         tags_raw = gh("release", "list", "--json", "tagName", "--limit", "100")
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        # Silence here would turn "gh is not authenticated" or "no network" into
+        # "no releases exist", which sends people to publish something that is
+        # already published.
+        print(
+            f"  warning: could not list releases ({exc}). "
+            "If gh needs auth, run: gh auth login",
+            file=sys.stderr,
+        )
         return []
     try:
         tags = [r.get("tagName") or "" for r in json.loads(tags_raw or "[]")]
@@ -160,7 +168,7 @@ def release_assets() -> list[dict]:
 
     out = []
     for tag in tags:
-        if not tag.startswith("images-"):
+        if not tag.startswith(prefix):
             continue
         try:
             view = json.loads(gh("release", "view", tag, "--json", "assets") or "{}")
@@ -168,7 +176,7 @@ def release_assets() -> list[dict]:
             continue
         for asset in view.get("assets") or []:
             out.append({
-                "dataset": tag[len("images-"):],
+                "key": tag[len(prefix):],
                 "tag": tag,
                 "name": asset.get("name", ""),
                 "size": asset.get("size", 0),
@@ -185,7 +193,7 @@ def download_images(dataset_name: str, dest: Path, force: bool = False) -> bool:
     that half-fills the images directory is worse than no images at all, because
     the app would silently show a partial dataset.
     """
-    matches = [a for a in release_assets() if a["dataset"] == dataset_name]
+    matches = [a for a in release_assets() if a["key"] == dataset_name]
     if not matches:
         print(f"  No release tagged 'images-{dataset_name}'.")
         print(f"  Publish one with:  gh release create images-{dataset_name} <bundle>.zip")
@@ -297,7 +305,172 @@ def _copy_tree(src: Path, dest: Path) -> int:
     return n
 
 
+MODELS_DIR = ROOT / "models"
+
+
+def _local_models() -> dict[str, Path]:
+    if not MODELS_DIR.is_dir():
+        return {}
+    # Base checkpoints (`yolo11n.pt` and friends) are not player detectors; they
+    # appear here just by having run Ultralytics once.
+    return {
+        p.stem: p for p in sorted(MODELS_DIR.glob("*.pt"))
+        if not p.stem.lower().startswith("yolo")
+    }
+
+
+def cmd_models(args: argparse.Namespace) -> int:
+    """Show published checkpoints next to what is actually downloaded."""
+    published = release_assets("models-")
+    local = _local_models()
+
+    if not published and not local:
+        print("No model checkpoints published and none downloaded.")
+        print("Publish one with:  python scripts/bounty.py publish-models --run-name <run>")
+        return 1
+
+    print(f"{'run':<32} {'size':>8}  status")
+    print("-" * 64)
+    seen = set()
+    for asset in published:
+        name = asset["key"]
+        seen.add(name)
+        size = f"{asset['size'] / (1024 * 1024):.1f} MB" if asset["size"] else "?"
+        state = "installed" if name in local else "not downloaded"
+        print(f"{name:<32} {size:>8}  {state}")
+    for name, path in local.items():
+        if name in seen:
+            continue
+        print(f"{name:<32} {path.stat().st_size / (1024 * 1024):>6.1f} MB  local only")
+    print("-" * 64)
+    print(f"{len(local)} installed in {MODELS_DIR}")
+    return 0
+
+
+def download_model(run_name: str = "", force: bool = False) -> bool:
+    """Download one published checkpoint into models/<run>.pt.
+
+    Weights are far smaller than the image bundles, but the same rule applies:
+    verify the size before trusting the file, since a truncated checkpoint fails
+    later in a much more confusing way (a YOLO load error mid-run).
+    """
+    published = release_assets("models-")
+    if not published:
+        print("  No 'models-*' release exists yet.")
+        print("  Publish one with:  python scripts/bounty.py publish-models --run-name <run>")
+        return False
+
+    if run_name:
+        matches = [a for a in published if a["key"] == run_name]
+        if not matches:
+            available = ", ".join(a["key"] for a in published)
+            print(f"  No model '{run_name}'. Available: {available}")
+            return False
+        asset = matches[0]
+    else:
+        # Newest published run wins, so `fetch --models` needs no run name.
+        asset = published[0]
+
+    name = asset["key"]
+    dest = MODELS_DIR / f"{name}.pt"
+    if dest.exists() and not force:
+        print(f"  {dest} already exists. Pass --force to re-download.")
+        return True
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    size_mb = asset["size"] / (1024 * 1024) if asset["size"] else 0
+    print(f"  Downloading {asset['name']} ({size_mb:.1f} MB) from {asset['tag']}…")
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="ssbu-model-"))
+    try:
+        subprocess.run(
+            ["gh", "release", "download", asset["tag"],
+             "--pattern", asset["name"], "--dir", str(tmpdir)],
+            cwd=ROOT, check=True,
+        )
+        downloaded = tmpdir / asset["name"]
+        if not downloaded.exists():
+            print(f"  gh reported success but {asset['name']} is not there.")
+            return False
+        actual = downloaded.stat().st_size
+        if asset["size"] and actual != asset["size"]:
+            print(f"  Download is {actual} bytes, expected {asset['size']} — aborting.")
+            return False
+        shutil.copy2(downloaded, dest)
+        print(f"  Installed {dest}")
+        return True
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"  Download failed: {exc}")
+        return False
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def cmd_publish_models(args: argparse.Namespace) -> int:
+    """Publish a checkpoint so contributors can run the model."""
+    weights = Path(args.weights).expanduser() if args.weights else None
+    if weights is None:
+        # Default to the newest local training run, which is what someone who
+        # just finished training wants to publish.
+        candidates = sorted(
+            ROOT.glob(".staging/**/runs/*/weights/best.pt"),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        if not candidates:
+            print("No checkpoint found under .staging/**/runs/*/weights/best.pt.")
+            print("Pass --weights path/to/best.pt")
+            return 1
+        weights = candidates[0]
+
+    if not weights.exists():
+        print(f"Weights not found: {weights}")
+        return 1
+
+    run_name = args.run_name or weights.parent.parent.name
+    tag = f"models-{run_name}"
+    size_mb = weights.stat().st_size / (1024 * 1024)
+    print(f"Publishing {weights} ({size_mb:.1f} MB) as {tag}")
+
+    notes = args.notes or (
+        f"Player detector checkpoint `{run_name}`.\n\n"
+        "```bash\npython scripts/bounty.py fetch --models\n```\n\n"
+        "Installs it as `models/%s.pt`, where `ingest_video.py` and "
+        "`predict_ssbu.py` will find it automatically." % run_name
+    )
+    rel_notes = Path(tempfile.mkdtemp(prefix="notes-")) / "notes.md"
+    rel_notes.write_text(notes, encoding="utf-8")
+    try:
+        exists = True
+        try:
+            gh("release", "view", tag, "--json", "tagName")
+        except subprocess.CalledProcessError:
+            exists = False
+
+        if exists and not args.clobber:
+            print(f"Release {tag} already exists. Pass --clobber to replace its asset.")
+            return 1
+        if exists:
+            out = gh("release", "upload", tag, str(weights), "--clobber")
+            print(f"Re-uploaded asset to {tag}")
+        else:
+            out = gh("release", "create", tag, str(weights),
+                     "--title", f"Model: {run_name}", "--notes-file", str(rel_notes),
+                     "--latest")
+            print(f"Published: {out}")
+    except subprocess.CalledProcessError as exc:
+        print(f"Publish failed: {exc}")
+        return 1
+    finally:
+        shutil.rmtree(rel_notes.parent, ignore_errors=True)
+    return 0
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
+    if getattr(args, "models", False):
+        return 0 if download_model(args.run or "", force=args.force) else 1
+    if not args.dataset:
+        print("Pass --dataset <path> for images, or --models for a checkpoint.")
+        return 1
     dataset = Path(args.dataset).resolve()
     ok = download_images(dataset.name, dataset / "images", force=args.force)
     return 0 if ok else 1
@@ -367,7 +540,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         n_images = _count_images(dataset)
         has_preds = (dataset / "predictions").is_dir()
         n_labels = labelled_frames(dataset)
-        asset = next((a for a in releases if a["dataset"] == name), None)
+        asset = next((a for a in releases if a["key"] == name), None)
 
         # One line per dataset: the thing a newcomer needs is "can I start on
         # this one, and if not what single command fixes it".
@@ -773,10 +946,25 @@ def main(argv: list[str] | None = None) -> int:
                    help="one dataset; default checks everything under data/datasets")
     d.set_defaults(func=cmd_doctor)
 
-    f = sub.add_parser("fetch", help="download the image bundle for a dataset")
-    f.add_argument("--dataset", default="data/datasets/ssbu_players")
-    f.add_argument("--force", action="store_true", help="overwrite a non-empty images dir")
+    f = sub.add_parser("fetch", help="download images (--dataset) or a checkpoint (--models)")
+    f.add_argument("--dataset", default="",
+                   help="dataset path for its image bundle")
+    f.add_argument("--models", action="store_true", help="download a model checkpoint instead")
+    f.add_argument("--run", default="", help="model run name (default: newest published)")
+    f.add_argument("--force", action="store_true", help="overwrite existing files")
     f.set_defaults(func=cmd_fetch)
+
+    m = sub.add_parser("models", help="list published and installed checkpoints")
+    m.set_defaults(func=cmd_models)
+
+    pm = sub.add_parser("publish-models", help="publish a checkpoint so others can run it")
+    pm.add_argument("--weights", default="",
+                    help="checkpoint path (default: newest under .staging/runs)")
+    pm.add_argument("--run-name", default="", help="name to publish under")
+    pm.add_argument("--notes", default="", help="release notes")
+    pm.add_argument("--clobber", action="store_true",
+                    help="replace the asset on an existing release")
+    pm.set_defaults(func=cmd_publish_models)
 
     c = sub.add_parser("create", help="open bounty issues for a dataset")
     c.add_argument("--dataset", required=True)

@@ -58,6 +58,7 @@ if not (_HERE / "predictions.py").exists():
         sys.path.insert(0, str(_repo_app))
 
 from predictions import MAX_BOXES, NMS_IOU, postprocess  # noqa: E402
+import model_paths  # noqa: E402
 
 REPO_ROOT = _HERE.parent
 DEFAULT_OUT_ROOT = REPO_ROOT / ".staging" / "ingested"
@@ -178,24 +179,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_weights(args: argparse.Namespace) -> Path:
-    """Pick a checkpoint: explicit path, then the named run, then the newest run."""
-    if args.weights:
-        return args.weights.expanduser()
-    root = args.root.expanduser()
-    named = root / "runs" / args.run_name / "weights" / "best.pt"
-    if named.exists():
-        return named
-    candidates = sorted(
-        root.glob("runs/*/weights/best.pt"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if candidates:
-        print(f"  note: '{args.run_name}' not found; using {candidates[0].parent.parent.name}")
-        return candidates[0]
-    raise FileNotFoundError(
-        f"No weights found under {root / 'runs'}/*/weights/best.pt and --weights was not given."
-    )
+    """Pick a checkpoint: explicit path, then a local run, then the published model."""
+    try:
+        return model_paths.resolve_weights(
+            explicit=args.weights,
+            run_name=args.run_name,
+            root=args.root.expanduser(),
+        )
+    except model_paths.WeightsNotFound as exc:
+        raise FileNotFoundError(str(exc)) from exc
 
 
 def pick_device(explicit: str | None) -> str | None:
