@@ -1,0 +1,123 @@
+name: paths guard
+
+# Enforces what a contributor with no repository role is allowed to change.
+#
+# Permissions are the wrong tool here: a labeler needs to comment on an issue to
+# claim it, and GitHub has no "comment only" role for public repos. So instead of
+# granting write access, this job decides mechanically whether a PR is *data*
+# (shippable by anyone) or *code* (a developer's job).
+#
+# It runs on `pull_request`, never `pull_request_target`: fork PRs then get a
+# read-only token and no secrets, which is what makes running contributor code
+# safe here.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Label changes must be data, not code
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ASSOC: ${{ github.event.pull_request.author_association }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          base = os.environ["BASE_SHA"]
+          head = os.environ["HEAD_SHA"]
+          assoc = os.environ.get("ASSOC", "").upper()
+          author = os.environ.get("AUTHOR", "someone")
+
+          # Roles that already carry review responsibility elsewhere.
+          TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+          LABEL = re.compile(r"^data/datasets/[^/]+/labels/.+\.txt$")
+          DOCS = re.compile(r"^(docs/|README\.md$|CONTRIBUTING\.md$|[^/]+\.md$)")
+
+          def changed_paths():
+              # --no-renames so a rename cannot hide a move into a code path.
+              out = subprocess.run(
+                  ["git", "diff", "--name-only", "-z", "--no-renames", base, head],
+                  capture_output=True, text=True, check=True).stdout
+              return [p for p in out.split("\0") if p]
+
+          def blob_modes():
+              out = subprocess.run(
+                  ["git", "ls-tree", "-z", "-r", head],
+                  capture_output=True, text=True, check=True).stdout
+              modes = {}
+              for entry in out.split("\0"):
+                  if not entry:
+                      continue
+                  meta, _, path = entry.partition("\t")
+                  parts = meta.split()
+                  if len(parts) >= 3:
+                      modes[path] = (parts[0], parts[2])
+              return modes
+
+          paths = changed_paths()
+          if not paths:
+              print("No file changes; nothing to check.")
+              raise SystemExit(0)
+
+          problems = []
+
+          code = [p for p in paths if not LABEL.match(p) and not DOCS.match(p)]
+          if code and assoc not in TRUSTED:
+              problems.append(
+                  f"{author} has no write access, so this PR may only touch "
+                  f"dataset labels or docs. It changes code:\n  "
+                  + "\n  ".join(code[:20])
+                  + (f"\n  ...and {len(code) - 20} more" if len(code) > 20 else "")
+              )
+
+          # Labels travel through the review app, which reads them through the
+          # filesystem. A symlink named *.txt would let a "label" write somewhere
+          # else entirely, and a binary or huge blob is not a label either.
+          modes = blob_modes()
+          for path in paths:
+              if not LABEL.match(path):
+                  continue
+              mode, sha = modes.get(path, ("", ""))
+              if not mode:
+                  continue  # deleted in this PR
+              if mode == "120000":
+                  problems.append(f"{path} is a symlink, not a label file")
+              elif mode == "160000":
+                  problems.append(f"{path} is a submodule, not a label file")
+              elif mode == "100755":
+                  problems.append(f"{path} is executable, not a label file")
+              else:
+                  size = int(subprocess.run(
+                      ["git", "cat-file", "-s", sha],
+                      capture_output=True, text=True, check=True).stdout.strip() or 0)
+                  if size > 65536:
+                      problems.append(f"{path} is {size} bytes; a label file should be tiny")
+
+          if problems:
+              print("::error::This PR changes something a label contribution should not.")
+              for p in problems:
+                  print(f"  - {p}")
+              print("\nLabel PRs may only change data/datasets/*/labels/**.txt.")
+              print("Code changes need a maintainer-authored PR.")
+              raise SystemExit(1)
+
+          labels = sum(1 for p in paths if LABEL.match(p))
+          other = len(paths) - labels
+          print(f"OK: {labels} label file(s), {other} other file(s), "
+                f"author association {assoc or 'unknown'}.")
+          PY

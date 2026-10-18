@@ -1,0 +1,38 @@
+# Who must review what.
+#
+# The rule this file encodes: *code* needs a maintainer's eyes, *labels* do not.
+#
+# Every contributor runs app/server.py and scripts/bounty.py on their own machine
+# with their own GitHub token, so merging code is equivalent to running it for
+# them. That is the trust boundary this file protects.
+#
+# Deliberately absent: data/datasets/*/labels/**. Labels are data, they are the
+# whole point of a bounty PR, and requiring review there would make bounties
+# unshippable. GitHub skips the "require code owner review" check when a PR
+# touches no owned path, which is exactly the behaviour wanted for label PRs.
+
+# --- everything that executes ------------------------------------------------
+/app/                    @MicahHeneveld
+/scripts/                @MicahHeneveld
+/notebooks/              @MicahHeneveld
+/configs/                @MicahHeneveld
+/.github/                @MicahHeneveld
+/requirements.txt        @MicahHeneveld
+
+# --- build and container definitions ----------------------------------------
+Dockerfile               @MicahHeneveld
+docker-compose.yml       @MicahHeneveld
+
+# --- data that is *not* a label --------------------------------------------
+# Labels are the only dataset files a reviewer writes, so everything else in a
+# dataset still needs review: data.yaml drives split paths, manifest.json drives
+# ingest bookkeeping, and predictions feed the disagreement overlay.
+/data/datasets/*/data.yaml        @MicahHeneveld
+/data/datasets/*/manifest.json    @MicahHeneveld
+/data/datasets/*/frames.csv       @MicahHeneveld
+/data/datasets/*/predictions/     @MicahHeneveld
+
+# --- docs ----------------------------------------------------------------
+# Inert: rendered, never executed.
+/docs/                   @MicahHeneveld
+*.md                     @MicahHeneveld

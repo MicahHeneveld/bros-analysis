@@ -1,0 +1,131 @@
+name: claim guard
+
+# Claiming used to require write access, because GitHub only lets people with
+# write comment on a *locked* issue. That made every labeler a collaborator who
+# could push to main - a much bigger problem than spam.
+#
+# So bounty issues are unlocked and this workflow becomes the gate instead. It
+# only trusts a claim from an account that is not obviously disposable, which is
+# the cheapest signal available without asking contributors for anything.
+#
+# A claim is still advisory (see docs/contributing.md): this decides whether the
+# `bounty:claimed` label gets applied, not whether anyone may do the work.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Accept or drop the claim
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          BODY: ${{ github.event.comment.body }}
+          LOGIN: ${{ github.event.comment.user.login }}
+          UTYPE: ${{ github.event.comment.user.type }}
+          ASSOC: ${{ github.event.comment.author_association }}
+        run: |
+          python3 - <<'PY'
+          import datetime, os, re, subprocess, sys
+
+          # Must stay identical to CLAIM_RE in scripts/bounty.py, or a claim the
+          # CLI considers valid would be silently dropped here.
+          CLAIM = re.compile(r"^[ \t]*claim by @([A-Za-z0-9-]+)[ \t]*$", re.I | re.M)
+          TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
+          MIN_ACCOUNT_DAYS = 30
+
+          repo = os.environ["REPO"]
+          number = os.environ["NUMBER"]
+          comment_id = os.environ["COMMENT_ID"]
+          login = os.environ.get("LOGIN", "")
+          utype = os.environ.get("UTYPE", "")
+          assoc = os.environ.get("ASSOC", "").upper()
+          body = (os.environ.get("BODY") or "").strip()
+
+          def gh(*args, check=True):
+              res = subprocess.run(["gh", *args], capture_output=True, text=True)
+              if check and res.returncode != 0:
+                  print(f"gh {' '.join(args)} failed: {res.stderr.strip()}")
+                  raise SystemExit(1)
+              return res.stdout.strip()
+
+          m = CLAIM.match(body)
+          if not m or m.end() != len(body):
+              # Not a claim at all - ordinary discussion is not this job's business.
+              raise SystemExit(0)
+
+          # A bot account cannot hold a bounty; and a comment that name-drops
+          # someone else is not a claim by its author.
+          if utype == "Bot" or m.group(1).lower() != login.lower():
+              print(f"Ignoring claim-shaped comment by {login or 'unknown'}.")
+              raise SystemExit(0)
+
+          labels = gh("api", f"repos/{repo}/issues/{number}",
+                      "--jq", ".labels[].name").splitlines()
+          if "bounty" not in labels:
+              raise SystemExit(0)
+
+          def account_age_days():
+              try:
+                  created = gh("api", f"users/{login}", "--jq", ".created_at")
+                  made = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+                  return (datetime.datetime.now(datetime.timezone.utc) - made).days
+              except (SystemExit, ValueError):
+                  return 0
+
+          def merged_prs():
+              try:
+                  return int(gh(
+                      "api",
+                      f"search/issues?q=repo:{repo}+is:pr+is:merged+author:{login}",
+                      "--jq", ".total_count") or 0)
+              except (SystemExit, ValueError):
+                  return 0
+
+          def vouched():
+              # A maintainer-maintained allowlist, so a brand-new contributor
+              # has a way in that does not require a merged PR they cannot get
+              # without first claiming something.
+              try:
+                  raw = gh("api", f"repos/{repo}/contents/.github/CLAIMERS",
+                           "-H", "Accept: application/vnd.github.raw")
+              except SystemExit:
+                  return False
+              lines = {ln.strip().lower().lstrip("@")
+                       for ln in raw.splitlines() if ln.strip()
+                       and not ln.strip().startswith("#")}
+              return login.lower() in lines
+
+          if assoc in TRUSTED_ASSOC:
+              print(f"{login} is a repository {assoc.lower()}; claim accepted.")
+          else:
+              age = account_age_days()
+              merged = merged_prs()
+              if age < MIN_ACCOUNT_DAYS and merged < 1 and not vouched():
+                  # Deleting rather than replying: the board reads claims from
+                  # comments, so a dropped comment is a claim that correctly did
+                  # not happen, and a spammer gets no notification to farm.
+                  gh("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}",
+                     check=False)
+                  print(f"::warning::Dropped claim from {login}: account is {age} day(s) "
+                        f"old and has no merged PRs. Ask a maintainer to add them to "
+                        f".github/CLAIMERS.")
+                  raise SystemExit(0)
+              print(f"{login}: {age} day(s) old, {merged} merged PR(s); claim accepted.")
+
+          res = subprocess.run(
+              ["gh", "issue", "edit", str(number), "--repo", repo,
+               "--add-label", "bounty:claimed"],
+              capture_output=True, text=True)
+          if res.returncode != 0:
+              print(f"::warning::Could not apply the label: {res.stderr.strip()}")
+          PY

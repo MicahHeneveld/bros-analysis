@@ -1,0 +1,11 @@
+# People whose bounty claims are trusted regardless of account age.
+#
+# The claim guard accepts repository collaborators, accounts older than 30 days,
+# and anyone with a merged PR here. A brand-new account has none of those and
+# cannot earn a merged PR without first claiming a bounty - so this file is the
+# way out of that loop.
+#
+# Add one GitHub login per line. A maintainer editing this file is the "vouch".
+# Lines starting with # are ignored.
+
+# @someone-who-joined-yesterday
