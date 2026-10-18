@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SSBU Label Review</title>
+<script src="/theme.js?v=1"></script>
+<link rel="stylesheet" href="/style.css?v=32" />
+<link rel="stylesheet" href="/landing.css?v=12" />
+</head>
+<body class="landing-body">
+
+<header id="landingTop">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong>SSBU Label Review</strong>
+  </div>
+  <span class="spacer"></span>
+  <a id="repoLink" class="quiet-link" target="_blank" rel="noopener"
+     href="https://github.com/MicahHeneveld/bros-analysis">Repository ↗</a>
+  <span id="ghChip" class="gh-chip" title="GitHub connection">checking GitHub…</span>
+  <button id="syncBtn" class="ghost" title="Pull bounties and claims from GitHub">Sync</button>
+  <button id="refreshBtn" class="ghost" title="Rescan datasets">Refresh</button>
+  <span class="header-divider" aria-hidden="true"></span>
+  <button type="button" id="themeToggle" class="theme-toggle" aria-pressed="true">
+    <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="4.1" fill="currentColor" />
+      <path d="M12 2.6v2.2M12 19.2v2.2M21.4 12h-2.2M4.8 12H2.6M18.6 5.4l-1.6 1.6M7 17l-1.6 1.6M18.6 18.6 17 17M7 7 5.4 5.4"
+            fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+    </svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M20.4 14.3A8.5 8.5 0 0 1 9.7 3.6a8.5 8.5 0 1 0 10.7 10.7Z"
+            fill="currentColor" />
+    </svg>
+    <span class="sr-only">Dark theme</span>
+  </button>
+</header>
+
+<!-- The one warning that has to be impossible to miss. Claims made here are
+     local until they are posted; the GitHub comment is what reserves work. -->
+<div id="claimWarn" class="claim-warn" role="note">
+  <svg class="warn-glyph" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 3.2 2.6 20.2h18.8L12 3.2Z" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linejoin="round" />
+    <path d="M12 9.4v4.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+    <circle cx="12" cy="17.1" r="1.15" fill="currentColor" />
+  </svg>
+  <div class="warn-text">
+    <strong>Claim bounties on GitHub before working on them.</strong>
+    <span class="muted">Claiming here marks the work for you; the GitHub comment is what
+      reserves it. Finish by opening a PR that closes the issue.</span>
+  </div>
+  <a id="warnBoardLink" class="quiet-link" target="_blank" rel="noopener"
+     href="https://github.com/MicahHeneveld/bros-analysis/issues">Bounty board ↗</a>
+  <button id="warnDismiss" class="ghost icon" aria-label="Dismiss this reminder" title="Dismiss">×</button>
+</div>
+
+<main id="landingMain">
+  <section id="datasetsPane" aria-label="Datasets">
+    <div class="pane-head">
+      <div>
+        <h1>Datasets</h1>
+        <p class="muted" id="datasetsSummary">Loading…</p>
+      </div>
+      <button id="addDatasetBtn" class="primary add-btn btn-lg">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="add-glyph">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        Add dataset
+      </button>
+    </div>
+
+    <div id="datasetList" class="dataset-list"></div>
+
+    <div id="emptyState" class="empty-state" hidden>
+      <svg viewBox="0 0 120 80" aria-hidden="true">
+        <rect x="10" y="16" width="100" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="2" />
+        <path d="M10 24h100" stroke="currentColor" stroke-width="2" />
+        <circle cx="60" cy="48" r="12" fill="none" stroke="currentColor" stroke-width="2" />
+        <path d="M56 43v10l9-5-9-5Z" fill="currentColor" />
+      </svg>
+      <h2>No datasets yet</h2>
+      <p class="muted">Add an MP4 and the model will sample it, pre-label it, and open bounties.</p>
+      <button id="emptyAddBtn" class="primary btn-lg">Add your first dataset</button>
+    </div>
+  </section>
+
+  <aside id="overviewPane" aria-label="Progress overview">
+    <div class="rings-card">
+      <div class="rings-head">
+        <div>
+          <h2 id="overviewTitle">Overview</h2>
+          <p class="muted" id="overviewSub">Pick a dataset to see its progress</p>
+        </div>
+        <span id="overviewBadge" class="kind-chip" hidden></span>
+      </div>
+
+      <div class="rings-wrap">
+        <!-- Two concentric arcs: dataset as the outer ring, the selected bounty
+             as the inner one. Animated purely by transition on dashoffset. -->
+        <svg id="rings" viewBox="0 0 240 240" role="img" aria-labelledby="ringsLabel">
+          <title id="ringsLabel">Dataset and bounty label progress</title>
+          <g transform="rotate(-90 120 120)">
+            <circle class="ring-track" cx="120" cy="120" r="100" />
+            <circle id="ringDataset" class="ring-fill dataset" cx="120" cy="120" r="100" />
+            <circle class="ring-track inner" cx="120" cy="120" r="76" />
+            <circle id="ringBounty" class="ring-fill bounty" cx="120" cy="120" r="76" />
+          </g>
+        </svg>
+        <div class="rings-center">
+          <span id="ringPercent" class="ring-percent">0%</span>
+          <span id="ringCaption" class="ring-caption">dataset</span>
+        </div>
+      </div>
+
+      <ul class="legend">
+        <li>
+          <span class="swatch dataset" aria-hidden="true"></span>
+          <span class="legend-label">Dataset</span>
+          <b id="legendDataset">—</b>
+        </li>
+        <li>
+          <span class="swatch bounty" aria-hidden="true"></span>
+          <span class="legend-label" id="legendBountyLabel">Bounty</span>
+          <b id="legendBounty">—</b>
+        </li>
+      </ul>
+
+      <div id="ringsFoot" class="rings-foot muted">Select a bounty to track it here.</div>
+    </div>
+
+    <div class="stat-grid" id="statGrid">
+      <div class="stat"><span class="stat-value" id="statFrames">—</span><span class="stat-label">frames</span></div>
+      <div class="stat"><span class="stat-value" id="statReviewed">—</span><span class="stat-label">reviewed</span></div>
+      <div class="stat"><span class="stat-value" id="statLeft">—</span><span class="stat-label">left</span></div>
+      <div class="stat"><span class="stat-value" id="statBounties">—</span><span class="stat-label">bounties</span></div>
+    </div>
+
+    <!-- Only completed bounties can be submitted. A partial bounty keeps its
+         labels local: a PR claims the whole reward, so half a slice would either
+         underpay the reviewer or land unfinished work on main. -->
+    <div class="submit-card" id="submitCard" hidden>
+      <div class="submit-head">
+        <h2>Submit work</h2>
+        <span class="mini muted" id="submitScope">all datasets</span>
+      </div>
+      <p class="submit-hint mini muted" id="submitHint">Finish a bounty to open its PR.</p>
+      <button class="primary submit-btn" id="submitOpen" disabled>
+        Nothing to submit
+      </button>
+    </div>
+
+    <!-- Points come straight from the board: a bounty is worth its frame count.
+         Done bounties count as earned, claimed ones as in progress. -->
+    <div class="leader-card" id="leaderboard" hidden>
+      <div class="leader-head">
+        <h2>Leaderboard</h2>
+        <span class="leader-scope">all datasets</span>
+      </div>
+      <ol id="leaderList" class="leader-list"></ol>
+      <p id="leaderEmpty" class="leader-empty muted" hidden>No claims yet — be the first.</p>
+    </div>
+
+    <div id="jobCard" class="job-card" hidden>
+      <div class="job-head">
+        <strong id="jobTitle">Working…</strong>
+        <span id="jobPercent" class="muted">0%</span>
+      </div>
+      <div class="bar tall"><div id="jobFill"></div></div>
+      <p id="jobMessage" class="mini muted"></p>
+      <pre id="jobLog" class="job-log"></pre>
+    </div>
+  </aside>
+</main>
+
+<!-- ===================== add dataset ===================== -->
+<div id="addOverlay" class="overlay" hidden>
+  <div class="modal add-modal" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+    <div class="modal-head">
+      <h3 id="addTitle">Add a dataset</h3>
+      <button id="addClose" class="ghost icon" aria-label="Close">×</button>
+    </div>
+
+    <p class="muted add-blurb">
+      The model samples the video, keeps frames showing both fighters, and writes
+      predictions for review. Labels start empty on purpose — you confirm them.
+    </p>
+
+    <div id="addForm">
+      <label class="dropzone" id="dropzone" for="videoFile">
+        <input type="file" id="videoFile" accept="video/mp4,video/webm,video/quicktime" hidden />
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"
+                fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+        <span id="dropText">Drop an MP4 here, or click to choose</span>
+        <span id="dropMeta" class="mini muted"></span>
+      </label>
+
+      <label class="field">
+        <span>Dataset name</span>
+        <input id="datasetName" type="text" spellcheck="false" placeholder="e.g. locals_finals_2026" />
+        <span class="mini muted">Created in <code>data/datasets/</code>. Renaming later means renaming the folder.</span>
+      </label>
+
+      <label class="field">
+        <span>Sample rate</span>
+        <select id="fpsSelect">
+          <option value="2">2 frames/sec — quick scan</option>
+          <option value="5" selected>5 frames/sec — default</option>
+          <option value="10">10 frames/sec — dense, slower</option>
+        </select>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="publishCheck" />
+        Also open GitHub issues and publish the image bundle
+      </label>
+      <p id="publishNote" class="mini muted"></p>
+    </div>
+
+    <div id="addProgress" hidden>
+      <div class="job-head">
+        <strong id="uploadLabel">Uploading</strong>
+        <span id="uploadPercent" class="muted">0%</span>
+      </div>
+      <div class="bar tall"><div id="uploadFill"></div></div>
+      <div id="jobSteps" class="job-steps"></div>
+    </div>
+
+    <div class="row modal-actions">
+      <span id="addError" class="mini err"></span>
+      <span class="spacer"></span>
+      <button id="addCancel" class="ghost">Close</button>
+      <button id="addStart" class="primary btn-lg" disabled>Start ingest</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- ===================== submit completed bounties ===================== -->
+<div id="submitOverlay" class="overlay" hidden>
+  <div class="modal submit-modal" role="dialog" aria-modal="true" aria-labelledby="submitTitle">
+    <div class="modal-head">
+      <h3 id="submitTitle">Submit completed bounties</h3>
+      <button id="submitClose" class="ghost icon" aria-label="Close">×</button>
+    </div>
+
+    <p class="muted submit-blurb">
+      Each bounty becomes its own branch and pull request. Nothing in a bounty
+      under way is included.
+    </p>
+
+    <ol id="submitList" class="submit-list"></ol>
+
+    <div class="row modal-actions">
+      <span id="submitError" class="mini err"></span>
+      <span class="spacer"></span>
+      <button id="submitCancel" class="ghost">Cancel</button>
+      <button id="submitConfirm" class="primary btn-lg">Open PR</button>
+    </div>
+  </div>
+</div>
+
+<script src="/landing.js?v=9"></script>
+</body>
+</html>

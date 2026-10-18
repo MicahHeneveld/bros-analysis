@@ -3,9 +3,15 @@
 #   docker compose up
 #   open http://127.0.0.1:8770
 #
-# The dataset is bind-mounted read-write on purpose: the app writes .txt labels
-# into it, and those are what you commit. Nothing is copied into the image, so
-# `git status` shows your review work as normal file changes.
+# The whole checkout is bind-mounted read-write on purpose: the app writes .txt
+# labels into the dataset, keeps bounty/claim state in .review/board.json, and
+# those are what you commit. Nothing is copied into the image, so `git status`
+# shows your review work as normal file changes.
+#
+# Mounting the repo (rather than one dataset) is what lets the landing screen
+# list every dataset under data/datasets/ and .staging/ingested/. Pinning a
+# single dataset here meant contributors only ever saw one - and an empty one at
+# that, until `bounty.py fetch` pulls its image bundle.
 
 services:
   review:
@@ -15,14 +21,8 @@ services:
     ports:
       - "127.0.0.1:8770:8770"
     volumes:
-      # Change the left side if your dataset lives elsewhere. The right side must
-      # stay /data to match the default --dataset below.
-      - ./data/datasets/ssbu_players:/data
+      - .:/app
     command:
-      - "--dataset"
-      - "/data"
-      - "--predictions"
-      - "/data/predictions"
       - "--port"
       - "8770"
     restart: "no"
@@ -31,8 +31,7 @@ services:
 # -----
 # * Bind to 127.0.0.1, not 0.0.0.0. This is a local tool and the server has no
 #   authentication; publishing it to your LAN is a mistake.
-# * If `data/datasets/ssbu_players/predictions` does not exist, drop the two
-#   --predictions lines. The app still runs, just without the model overlay or
-#   the disagreement ranking.
+# * Images are not in git. On the landing screen a dataset with no images shows
+#   zero frames; run `python3 scripts/bounty.py fetch --dataset <path>` first.
 # * On Linux, add `user: "${UID:-1000}:${GID:-1000}"` if labels come out owned by
 #   root.

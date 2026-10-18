@@ -6,6 +6,7 @@ Run: python app/selftest.py
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -870,6 +871,64 @@ def test_review_store() -> None:
             bad_reason_rejected = True
         check("invalid reason rejected", bad_reason_rejected)
         check("reason codes are non-empty", len(REASON_CODES) >= 4)
+
+        # reset_many is how unlabelled "good" frames are returned to the queue.
+        # It must be one write and must leave the rest of the state alone.
+        store.set_status("train/f", "good")
+        cleared = store.reset_many(["train/c", "train/f", "train/nope"])
+        check("reset_many clears only existing entries", cleared == 2, str(cleared))
+        check("reset target is unreviewed", store.get("train/c")["status"] == "unreviewed")
+        check("reset keeps other statuses", store.get("train/a")["status"] == "bad")
+        check("reset persisted", ReviewStore(tmp).get("train/f")["status"] == "unreviewed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_good_requires_labels() -> None:
+    """A frame cannot be approved without boxes.
+
+    The label app used to record the review before the debounced label save, so
+    a refresh between the two writes left frames marked good with an empty
+    label file. Those frames look finished on the board but contain no data.
+    The server now refuses the combination outright.
+    """
+    print("\n[integrity: good implies labels]")
+    import importlib.util
+
+    import server
+    from label_io import LabelStore
+
+    tmp = Path(tempfile.mkdtemp(prefix="integrity-"))
+    try:
+        images = tmp / "images" / "train"
+        images.mkdir(parents=True)
+        (images / "labelled.jpg").write_bytes(b"\xff\xd8\xff")
+        (images / "blank.jpg").write_bytes(b"\xff\xd8\xff")
+
+        labels = tmp / "labels" / "train"
+        labels.mkdir(parents=True)
+        (labels / "labelled.txt").write_text("0 0.5 0.5 0.2 0.2\n")
+        (labels / "blank.txt").write_text("")
+
+        store = LabelStore(tmp)
+        parsed = store.load("train/labelled")
+        check("label file parsed", len(parsed.boxes) == 1, str(parsed.boxes))
+        blank = store.load("train/blank")
+        check("empty label file has no boxes", len(blank.boxes) == 0)
+
+        # The predicate AppState.good_without_labels() relies on.
+        def has_labels(image_id: str) -> bool:
+            return store.label_path(image_id).exists() and len(store.load(image_id).boxes) > 0
+
+        check("labelled frame qualifies", has_labels("train/labelled"))
+        check("blank frame does not", not has_labels("train/blank"))
+
+        # And the review store really can record the repair.
+        from review_store import ReviewStore
+        reviews = ReviewStore(tmp)
+        reviews.set_status("train/blank", "good")
+        reviews.reset_many(["train/blank"])
+        check("repair requeues the frame", reviews.get("train/blank")["status"] == "unreviewed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1088,6 +1147,225 @@ def test_bounty_metadata() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_board_github_errors() -> None:
+    """A failed sync must say *why*, in terms a reviewer can act on.
+
+    The landing screen used to render one generic "GitHub offline" for every
+    failure. A 403 from an intermediary and an expired token need different
+    fixes, so the distinction is carried from the board to the chip.
+    """
+    print("\n[board github errors]")
+    from board import Board, gh_failure
+
+    blocked = gh_failure(RuntimeError('Post "https://api.github.com/graphql": Forbidden'))
+    check("403 is classified as blocked", blocked["kind"] == "blocked", str(blocked))
+    check("blocked failure carries a hint", bool(blocked["hint"]))
+    check("blocked keeps the raw message", "Forbidden" in blocked["error"])
+
+    check("bad credentials is auth",
+          gh_failure(RuntimeError("Bad credentials"))["kind"] == "auth")
+    check("401 is auth",
+          gh_failure(RuntimeError("HTTP 401: Unauthorized"))["kind"] == "auth")
+    check("dns failure is network",
+          gh_failure(RuntimeError("dial tcp: lookup api.github.com: no such host"))["kind"]
+          == "network")
+    check("timeout is network",
+          gh_failure(RuntimeError("command timed out"))["kind"] == "network")
+    check("unknown stays unknown", gh_failure(RuntimeError("kaboom"))["kind"] == "unknown")
+    check("unknown still gets a hint", bool(gh_failure(RuntimeError("kaboom"))["hint"]))
+    check("empty error does not crash",
+          gh_failure(None)["kind"] == "unknown", str(gh_failure(None)))
+
+    # A 403 body that happens to mention auth must stay "blocked": telling
+    # someone to re-authenticate when their token is fine sends them the wrong way.
+    both = gh_failure(RuntimeError("403 Forbidden: check your auth"))
+    check("403 wins over auth", both["kind"] == "blocked", str(both))
+
+    tmp = Path(tempfile.mkdtemp(prefix="board-gh-"))
+    try:
+        board = Board(tmp, store_path=tmp / "board.json")
+
+        def fail(*_a, **_k):
+            raise RuntimeError('Post "https://api.github.com/graphql": Forbidden')
+
+        board._gh = fail
+        res = board.sync()
+        check("failed sync reports the kind",
+              res["ok"] is False and res["kind"] == "blocked", str(res))
+        snap = board.snapshot()["github"]
+        check("failure is persisted on the board",
+              snap["kind"] == "blocked" and bool(snap["hint"]), str(snap))
+
+        def ok(*args, **_k):
+            return "" if list(args[:2]) == ["api", "user"] else "[]"
+
+        board._gh = ok
+        res = board.sync()
+        check("successful sync clears the error", res["ok"] is True, str(res))
+        snap = board.snapshot()["github"]
+        check("cleared error is empty",
+              snap["error"] == "" and snap["kind"] == "" and snap["hint"] == "", str(snap))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_board_claim_sync() -> None:
+    """A local claim must reach GitHub, and sync must not bury it.
+
+    The failure this guards against: ``seed`` gave a bounty no issue number, so
+    ``sync`` imported the same issue as a separate ``gh#N`` row. The local row
+    owned the slice and the claim; the ``gh#`` row owned the issue. Claiming
+    locally then looked claimed here and untouched on GitHub, forever.
+    """
+    print("\n[board claim sync]")
+    from board import Board, _issue_ordinal
+
+    check("ordinal parses", _issue_ordinal("Bounty: x — 250 frames [3/6]") == 3)
+    check("missing ordinal is 0", _issue_ordinal("Bounty: x — 250 frames") == 0)
+    check("ordinal needs the bracket", _issue_ordinal("part 3 of 6") == 0)
+
+    tmp = Path(tempfile.mkdtemp(prefix="board-claim-"))
+    try:
+        ds = tmp / "data" / "datasets" / "demo"
+        (ds / "images" / "train").mkdir(parents=True)
+        (ds / "labels" / "train").mkdir(parents=True)
+        for i in range(4):
+            (ds / "images" / "train" / f"{i}.jpg").write_bytes(b"x")
+            (ds / "labels" / "train" / f"{i}.txt").write_text("")
+
+        board = Board(tmp, store_path=tmp / "board.json")
+        created = board.seed("demo", target=2, cap=2)
+        local_id = created[0]["id"]
+        board.claim(local_id, by="me")
+        check("local claim is queued for GitHub",
+              board.snapshot()["bounties"][0]["claim_pending_github"] is True)
+
+        issues = [
+            {"number": 1, "title": "Bounty: demo — 2 frames [1/2]",
+             "body": 'x\n<!-- bounty: {"dataset": "demo", "target": 2, "points": 2} -->',
+             "url": "u/1", "labels": [{"name": "bounty"}], "comments": []},
+            {"number": 2, "title": "Bounty: demo — 2 frames [2/2]",
+             "body": 'x\n<!-- bounty: {"dataset": "demo", "target": 2, "points": 2} -->',
+             "url": "u/2", "labels": [{"name": "bounty"}], "comments": []},
+        ]
+        posted: list[tuple] = []
+
+        def fake_gh(*args, timeout=None):
+            if list(args[:2]) == ["issue", "list"]:
+                return json.dumps(issues)
+            if list(args[:2]) == ["api", "user"]:
+                return "me"
+            if list(args[:2]) == ["issue", "comment"]:
+                posted.append(tuple(args[:3]))
+                return ""
+            return ""
+
+        board._gh = fake_gh
+
+        # A previous sync left shadow rows behind, which is the real-world state.
+        with board._lock:
+            for n in (1, 2):
+                board._data["bounties"][f"gh#{n}"] = {
+                    "id": f"gh#{n}", "dataset": "demo", "index": 0, "slice": None,
+                    "source": "github", "created": 0, "github_issue": n,
+                }
+            board._save()
+        shadowed = board.snapshot()["bounties"]
+        check("shadow rows exist before sync",
+              any(b["id"] == "gh#1" for b in shadowed), str([b["id"] for b in shadowed]))
+
+        res = board.sync()
+        check("sync succeeds", res["ok"] is True, str(res))
+        check("issues are adopted, not imported", res["imported"] == 0, str(res))
+        check("adoption is counted", res["linked"] == 2, str(res))
+
+        after = board.snapshot()["bounties"]
+        ids = sorted(b["id"] for b in after)
+        check("shadow duplicates are gone", ids == [local_id, "demo#2"], str(ids))
+
+        claimed = next(b for b in after if b["id"] == local_id)
+        check("local bounty adopted issue #1", claimed["github_issue"] == 1, str(claimed))
+        check("local claim survives an open issue", claimed["status"] == "claimed",
+              str(claimed.get("status")))
+        check("claim is no longer pending", claimed["claim_pending_github"] is False)
+        check("queued claim was posted", posted == [("issue", "comment", "1")], str(posted))
+        check("flush reports the post", res["flushed"] == {"posted": 1, "failed": 0},
+              str(res.get("flushed")))
+
+        # A second sync must be a no-op: nothing new, nothing re-posted.
+        posted.clear()
+        again = board.sync()
+        check("second sync imports nothing", again["imported"] == 0, str(again))
+        check("second sync re-links nothing", again["linked"] == 0, str(again))
+        check("second sync re-posts nothing", posted == [], str(posted))
+        check("bounty count is stable",
+              len(board.snapshot()["bounties"]) == 2,
+              str([b["id"] for b in board.snapshot()["bounties"]]))
+
+        # ensure_linked adopts an existing issue instead of opening a new one.
+        with board._lock:
+            board._data["bounties"]["demo#3"] = {
+                "id": "demo#3", "dataset": "demo", "index": 3, "title": "demo part 3",
+                "target": 2, "points": 2, "slice": [], "source": "local",
+                "status": "open", "claimed_by": "", "github_issue": 0,
+                "claim_pending_github": False, "created": 2,
+            }
+            board._save()
+        opened: list[tuple] = []
+
+        def no_create(*args, timeout=None):
+            if list(args[:2]) == ["issue", "create"]:
+                opened.append(args)
+            if list(args[:2]) == ["issue", "list"]:
+                return json.dumps(issues + [{
+                    "number": 3, "title": "Bounty: demo — 2 frames [3/3]",
+                    "body": 'x\n<!-- bounty: {"dataset": "demo", "target": 2} -->',
+                    "url": "u/3", "labels": [], "comments": [],
+                }])
+            return ""
+
+        board._gh = no_create
+        link = board.ensure_linked("demo#3")
+        check("ensure_linked adopts a matching issue",
+              link is not None and link["number"] == 3, str(link))
+        check("ensure_linked does not open a duplicate", opened == [], str(opened))
+
+        # A bounty with no matching issue gets one created, so the claim can post.
+        with board._lock:
+            board._data["bounties"]["lonely#9"] = {
+                "id": "lonely#9", "dataset": "lonely", "index": 9, "title": "lonely part 9",
+                "target": 10, "points": 10, "slice": [], "source": "local",
+                "status": "claimed", "claimed_by": "me", "github_issue": 0,
+                "claim_pending_github": True, "created": 1,
+            }
+            board._save()
+
+        made: list[tuple] = []
+
+        def create_gh(*args, timeout=None):
+            if list(args[:2]) == ["issue", "list"]:
+                return "[]"
+            if list(args[:2]) == ["issue", "create"]:
+                made.append(args)
+                return "https://github.com/o/r/issues/42"
+            if list(args[:2]) == ["issue", "comment"]:
+                return ""
+            return ""
+
+        board._gh = create_gh
+        result = board.post_claim("lonely#9")
+        check("claim without an issue opens one", len(made) == 1, str(made))
+        check("new issue carries bounty metadata",
+              "<!-- bounty:" in " ".join(made[0]), str(made[0]))
+        check("claim posts to the new issue", result.get("posted") is True, str(result))
+        check("issue number is recorded",
+              board.snapshot()["github"] is not None
+              and next(b for b in board.snapshot()["bounties"]
+                       if b["id"] == "lonely#9")["github_issue"] == 42)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_image_bundle_extraction() -> None:
     """Bundles are zipped inconsistently; extraction must flatten either shape.
 
@@ -1278,6 +1556,110 @@ def test_model_paths() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_bounty_submit_resolution() -> None:
+    """Submit must know which issue it belongs to without guessing."""
+    print("\n[bounty submit resolution]")
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import bounty as bounty_mod
+    finally:
+        sys.path.remove(str(scripts))
+
+    number, why = bounty_mod.resolve_submit_issue(None, "bounty/42", [])
+    check("branch names the issue", number == 42 and not why, f"{number} {why}")
+
+    number, _ = bounty_mod.resolve_submit_issue(7, "bounty/42", [])
+    check("an explicit issue wins", number == 7, str(number))
+
+    number, _ = bounty_mod.resolve_submit_issue(None, "main", [9])
+    check("a lone local claim is the fallback", number == 9, str(number))
+
+    number, why = bounty_mod.resolve_submit_issue(None, "main", [9, 10])
+    check("two claims are ambiguous, not a coin flip", number is None and why, str(why))
+
+    number, why = bounty_mod.resolve_submit_issue(None, "main", [])
+    check("nothing to infer fails with a reason", number is None and why, str(why))
+
+
+def test_bounty_submit_branch_adoption() -> None:
+    """Claiming in the browser cannot create a branch, so submit must.
+
+    Two invariants: uncommitted label edits follow the new branch (they are
+    never committed to main), and commits a previous submit left on main are
+    carried over while main is rewound to its remote.
+    """
+    print("\n[bounty submit branch adoption]")
+    if not shutil.which("git"):
+        check("git available", False, "git not installed")
+        return
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    try:
+        import bounty as bounty_mod
+    finally:
+        sys.path.remove(str(scripts))
+
+    saved_root = bounty_mod.ROOT
+    repo_root = Path(__file__).resolve().parent.parent
+    scratch = repo_root / ".review"
+    scratch.mkdir(exist_ok=True)
+    created: list[Path] = []
+
+    def make_repo(prefix: str):
+        # Under the repo rather than /tmp: sandboxes happily write here, and
+        # .review/ is gitignored, so these throwaway repos never show up.
+        tmp = Path(tempfile.mkdtemp(prefix=prefix, dir=scratch))
+        created.append(tmp)
+
+        def git(*args: str) -> str:
+            return subprocess.run(["git", *args], cwd=tmp, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "selftest@example.com")
+        git("config", "user.name", "selftest")
+        labels = tmp / "data/datasets/d/labels/d"
+        labels.mkdir(parents=True)
+        (labels / "a.txt").write_text("0 0.5 0.5 0.2 0.2\n")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
+        return tmp, git, labels
+
+    # Case 1: the normal path. Review happened on main, nothing is committed yet.
+    tmp, git, labels = make_repo("submit-dirty-")
+    try:
+        bounty_mod.ROOT = tmp
+        (labels / "b.txt").write_text("0 0.4 0.4 0.2 0.2\n")
+        branch = bounty_mod.adopt_branch(12, "main", "main")
+        check("a branch is created", branch == "bounty/12", branch)
+        check("we are on it", git("rev-parse", "--abbrev-ref", "HEAD") == "bounty/12")
+        check("uncommitted work came along", "b.txt" in git("status", "--porcelain"))
+        check("main did not move",
+              git("rev-parse", "main") == git("rev-parse", "origin/main"))
+    finally:
+        bounty_mod.ROOT = saved_root
+
+    # Case 2: a bare `submit` already committed labels straight onto main.
+    tmp, git, labels = make_repo("submit-committed-")
+    try:
+        bounty_mod.ROOT = tmp
+        (labels / "b.txt").write_text("0 0.4 0.4 0.2 0.2\n")
+        git("add", "-A")
+        git("commit", "-qm", "labels: bounty #12")
+        branch = bounty_mod.adopt_branch(12, "main", "main")
+        check("label commits move to the branch",
+              git("log", "-1", "--pretty=%s", branch).startswith("labels: bounty #12"))
+        check("main is rewound to the remote",
+              git("rev-parse", "main") == git("rev-parse", "origin/main"))
+        check("the label file is still present", (labels / "b.txt").exists())
+    finally:
+        bounty_mod.ROOT = saved_root
+        for path in created:
+            shutil.rmtree(path, ignore_errors=True)
+
+
 def _raises(fn, exc_type) -> bool:
     try:
         fn()
@@ -1286,6 +1668,53 @@ def _raises(fn, exc_type) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return False
+
+
+def test_submitted_bounty_is_locked() -> None:
+    """A submitted bounty is frozen.
+
+    Once labels are in a PR they are what a reviewer is being asked to approve,
+    so a later edit would silently change the branch. The landing screen hides
+    the Edit button, but that is a courtesy; the refusal has to live where the
+    write happens.
+    """
+    print("\n[submitted bounty is locked]")
+    from board import Board
+
+    tmp = Path(tempfile.mkdtemp(prefix="board-submitted-"))
+    try:
+        ds = tmp / "data" / "datasets" / "demo"
+        (ds / "images" / "train").mkdir(parents=True)
+        (ds / "labels" / "train").mkdir(parents=True)
+        for i in range(4):
+            (ds / "images" / "train" / f"{i}.jpg").write_bytes(b"x")
+            (ds / "labels" / "train" / f"{i}.txt").write_text("")
+
+        board = Board(tmp, store_path=tmp / "board.json")
+        created = board.seed("demo", target=2, cap=2)
+        bounty_id = created[0]["id"]
+        board.claim(bounty_id, by="me")
+
+        check("an unsubmitted bounty has no pr_url",
+              not board.bounties()[0].get("pr_url"))
+
+        with board._lock:
+            record = board._data["bounties"][bounty_id]
+            record["pr_url"] = "https://example.test/pull/7"
+            record["submitted_at"] = 1_790_000_000
+        board._save()
+
+        row = next(b for b in board.bounties() if b["id"] == bounty_id)
+        check("submitted state is exposed to the board",
+              row.get("pr_url") == "https://example.test/pull/7", str(row.get("pr_url")))
+
+        result = board.submit_one(bounty_id)
+        check("a submitted bounty cannot be submitted again",
+              result["ok"] is False, str(result))
+        check("the refusal says why",
+              "submitted" in str(result.get("reason", "")), str(result.get("reason")))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main() -> int:
@@ -1306,8 +1735,16 @@ def main() -> int:
     test_sample_sorting()
     test_store_save_and_undo()
     test_review_store()
+    test_good_requires_labels()
     test_video_mode()
     test_bounty_metadata()
+    test_bounty_submit_resolution()
+    test_bounty_submit_branch_adoption()
+    test_bounty_submit_resolution()
+    test_bounty_submit_branch_adoption()
+    test_board_github_errors()
+    test_board_claim_sync()
+    test_submitted_bounty_is_locked()
     test_image_bundle_extraction()
     test_split_dataset()
     test_model_paths()

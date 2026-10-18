@@ -1,15 +1,122 @@
-:root {
-  --bg: #14161a;
-  --bg-2: #1b1e24;
-  --bg-3: #23272f;
-  --line: #2f343e;
-  --fg: #e6e9ef;
-  --fg-dim: #98a1b0;
-  --accent: #4a9eff;
-  --good: #35c07a;
+/* ------------------------------------------------------------------- theme
+   Two palettes, one token shape. Orange is the only brand colour and is spent
+   almost entirely on text, focus and one filled action per screen. Everything
+   else is grey: neutral surfaces, grey hairline borders, coloured text/dots for
+   state. Tints are deliberately absent — a state that matters gets a border or
+   a rail, not a wash of colour.
+
+   The material is matte: a baked-in grain tile plus a 1px inner bevel, so
+   surfaces read as machined rather than flat CSS. Only progress fills glow. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101011;
+  --bg-2: #161618;
+  --bg-3: #1e1e21;
+  --bg-4: #27272b;
+  --bg-sunken: #0b0b0c;
+  --line: #2b2b30;
+  --line-strong: #3d3d44;
+  --fg: #ececee;
+  --fg-dim: #8e8e96;
+  --accent: #ff6b1a;
+  --accent-hover: #ff8245;
+  --accent-border: #d9550f;
+  --accent-glow: rgba(255, 107, 26, .5);
+  --accent-text: #ff8245;
+  /* Focus rings need 3:1 against whatever is behind them; a bright orange is
+     enough on black but not on paper, so light mode rings with ink. */
+  --ring: #ff6b1a;
+  --good-text: #4ecb7d;
+  --warn-text: #e8ae43;
+  --on-accent: #170a02;
+  --on-good: #04140a;
+  --on-bad: #1a0503;
+  --on-empty: #0b0b0c;
+  --good: #3fb46b;
   --bad: #e5534b;
+  --bad-fg: #ffb3ae;
   --warn: #e0a437;
-  --empty: #7a7f8a;
+  /* On dark, amber reads as amber, so the "in progress / model" hue aliases the
+     warn ramp and the dark theme is visually unchanged. Light mode overrides
+     this with a cool hue because amber text on paper turns brown. */
+  --info: #e0a437;
+  --info-text: #e8ae43;
+  --info-glow: rgba(224, 164, 55, .4);
+  --on-info: #1a1206;
+  --on-warn: #1a1206;
+  --empty: #72727a;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .5);
+  --bevel: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 -1px 0 rgba(0, 0, 0, .28);
+  --bevel-strong: inset 0 1px 0 rgba(255, 255, 255, .18), inset 0 -1px 0 rgba(0, 0, 0, .22);
+  --lift: 0 1px 2px rgba(0, 0, 0, .38);
+  --press: inset 0 1px 3px rgba(0, 0, 0, .45);
+  --sel: #2c2c31;
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  --h-control: 30px;
+  --h-control-sm: 26px;
+  --h-control-lg: 36px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  /* Paper and ink rather than grey-on-white: a warm off-white ground keeps the
+     orange accent from looking like a warning, and stops the neutral greys from
+     reading blue-cold next to it. */
+  --bg: #f6f3ee;
+  --bg-2: #fffdfa;
+  --bg-3: #ece8e1;
+  --bg-4: #e0dbd2;
+  --bg-sunken: #eae5dd;
+  --line: #ddd6cb;
+  --line-strong: #c3baad;
+  --fg: #171310;
+  /* Dark enough to clear 4.5:1 even on the deepest raised surface (bg-4). */
+  --fg-dim: #625c54;
+  /* Vivid orange, not brick. The old #bf3d0a was the darkest value that still
+     passed contrast, which is why light mode read as brown. Inverting the
+     relationship fixes it: the brand colour is a bright fill and the ink on top
+     is dark, exactly like the dark theme. That keeps 5:1 for the label and a
+     solid 3:1 edge against the page, without any muddy mid-tone. */
+  --accent: #e85300;
+  --accent-hover: #d24b00;
+  --accent-border: #c44600;
+  --accent-glow: rgba(232, 83, 0, .3);
+  --ring: #171310;
+  /* Orange as *text* on paper is the one thing that cannot be bright: it has to
+     darken to stay legible, and dark orange is the brown we are removing. So
+     accent text is ink and orange is spent on fills, dots, rails and borders. */
+  --accent-text: #1b1512;
+  --good-text: #0f6a30;
+  --on-accent: #1a0e05;
+  --on-good: #ffffff;
+  --on-bad: #ffffff;
+  --on-empty: #ffffff;
+  --good: #157f3c;
+  --bad: #b42318;
+  --bad-fg: #a01a10;
+  /* Yellow cannot be text on a light ground: to stay legible it has to get
+     darker, and dark yellow *is* brown. So on light surfaces amber is a FILL
+     only (dots, progress bars, rails) with dark ink on top, and everything that
+     used to be amber text - claimed, in progress, model suggestions - moves to
+     the cool --info family instead. Genuine warnings use the red family, which
+     reads as "problem" rather than as mud. */
+  --warn: #e0a437;
+  --warn-text: #9f2d0c;
+  --info: #44548c;
+  --info-text: #3d4a7d;
+  --info-glow: rgba(68, 84, 140, .26);
+  --on-info: #fbfaf8;
+  /* Gold is a fill in both themes, so its ink is dark in both. */
+  --on-warn: #2a1d05;
+  --empty: #8a857e;
+  --shadow: 0 10px 30px rgba(40, 28, 16, .14);
+  --bevel: inset 0 1px 0 #ffffff, inset 0 -1px 0 rgba(40, 28, 16, .045);
+  --bevel-strong: inset 0 1px 0 #ffffff, inset 0 -1px 0 rgba(40, 28, 16, .06);
+  --lift: 0 1px 1.5px rgba(40, 28, 16, .11);
+  --press: inset 0 1px 3px rgba(40, 28, 16, .14);
+  --sel: #ffffff;
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -20,7 +127,9 @@
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
   color: var(--fg);
   font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
@@ -47,24 +156,193 @@ body {
 #layout { flex: 1 1 auto; min-height: 0; }
 #videoView { flex: 1 1 auto; min-height: 0; }
 
-button, select, input, textarea {
+/* ------------------------------------------------------------------ inputs */
+select,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
   font: inherit;
+  font-size: 12.5px;
   color: var(--fg);
   background: var(--bg-3);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 5px 9px;
+  border-radius: 8px;
+  height: var(--h-control);
+  padding: 0 10px;
+  box-sizing: border-box;
+  box-shadow: var(--bevel);
+  transition: background-color .14s ease, border-color .14s ease;
+}
+textarea {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  transition: background-color .14s ease, border-color .14s ease;
+}
+select { cursor: pointer; }
+input::placeholder, textarea::placeholder { color: var(--fg-dim); opacity: .75; }
+select:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
+
+/* ----------------------------------------------------------------- buttons
+   A small variant/size system adapted from the shadcn/ui and Vercel Geist
+   contracts, rebuilt in plain CSS. The material comes from three layers: a
+   soft-light grain tile, a 1px inner bevel, and one restrained lift shadow.
+   Nothing here is glossy — the bevel is 5% white, not a sheen. */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--h-control);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 560;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--fg);
+  background-color: var(--bg-3);
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--bevel), var(--lift);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color .14s ease, border-color .14s ease,
+              color .14s ease, box-shadow .14s ease, transform .1s ease;
+}
+button:hover:not(:disabled) { background-color: var(--bg-4); border-color: var(--line-strong); }
+button:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--press); }
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button svg { flex: 0 0 auto; pointer-events: none; }
+
+button.full { width: 100%; }
+
+/* Filled accent — one per screen, never repeated down a list. */
+button.primary {
+  background-color: var(--accent);
+  border-color: var(--accent-border);
+  color: var(--on-accent);
+  font-weight: 650;
+  box-shadow: var(--bevel-strong), var(--lift);
+}
+button.primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
-button { cursor: pointer; }
-button:hover { border-color: #3f4653; background: #2a2f38; }
-button.full { width: 100%; }
-button.ghost { background: transparent; }
-button.good { background: var(--good); border-color: var(--good); color: #062315; font-weight: 600; }
-button.bad { background: var(--bad); border-color: var(--bad); color: #2a0806; font-weight: 600; margin-top: 6px; }
-button.empty { background: var(--empty); border-color: var(--empty); color: #14161a; font-weight: 600; }
-button.active { outline: 2px solid var(--accent); outline-offset: 1px; }
-button:disabled { opacity: .4; cursor: not-allowed; }
+/* Quiet — toolbars, icon affordances, navigation. No material, no border. */
+button.ghost {
+  background-color: transparent;
+  background-image: none;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--fg-dim);
+}
+button.ghost:hover:not(:disabled) {
+  background-color: var(--bg-3);
+  border-color: var(--line);
+  color: var(--fg);
+}
+button.ghost:active:not(:disabled) { box-shadow: none; }
+
+/* Judge actions. Solid green/red blocks turned the panel into a traffic light,
+   so each action is a neutral control with one coloured dot and a border that
+   only takes the semantic colour on hover. */
+button.good,
+button.empty,
+button.bad {
+  height: var(--h-control-lg);
+  background-color: var(--bg-3);
+  border-color: var(--line-strong);
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 13px;
+  box-shadow: var(--bevel), var(--lift);
+}
+button.good::before,
+button.empty::before,
+button.bad::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--empty);
+}
+button.good::before { background: var(--good); }
+button.bad::before { background: var(--bad); }
+button.good:hover:not(:disabled) { background-color: var(--bg-4); border-color: var(--good); }
+button.empty:hover:not(:disabled) { background-color: var(--bg-4); border-color: var(--line-strong); }
+button.bad:hover:not(:disabled) { background-color: var(--bg-4); border-color: var(--bad); }
+button.good:active:not(:disabled),
+button.empty:active:not(:disabled),
+button.bad:active:not(:disabled) { box-shadow: var(--press); }
+
+button.active { outline: 2px solid var(--ring); outline-offset: 1px; }
+
+button.icon { width: var(--h-control); height: var(--h-control); padding: 0; font-size: 15px; }
+.btn-sm { height: var(--h-control-sm); padding: 0 10px; font-size: 12px; border-radius: 7px; }
+.btn-lg { height: var(--h-control-lg); padding: 0 16px; font-size: 13px; border-radius: 9px; }
+
+/* The judge row is the one place where equal widths matter: two halves over a
+   full-width third, all 36px tall and thumb-sized. */
+.decide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.decide-grid #markBad { grid-column: 1 / -1; }
+.decide-grid > button { width: 100%; }
+
+/* ------------------------------------------------------------ theme toggle
+   One real button, constant accessible name ("Dark theme") and aria-pressed
+   for state, so screen readers announce the thing rather than a moving label.
+   The icons swap with transform/opacity only. */
+.theme-toggle {
+  position: relative;
+  width: var(--h-control);
+  height: var(--h-control);
+  padding: 0;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background-color: var(--bg-3);
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
+  color: var(--fg-dim);
+  overflow: hidden;
+}
+.theme-toggle:hover:not(:disabled) { color: var(--fg); background-color: var(--bg-4); border-color: var(--line-strong); }
+.theme-toggle svg {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  transition: transform .3s cubic-bezier(.2, .8, .2, 1), opacity .18s ease;
+}
+.theme-toggle .icon-sun { opacity: 0; transform: translateY(9px) rotate(-40deg) scale(.6); }
+.theme-toggle .icon-moon { opacity: 1; transform: none; }
+[data-theme="light"] .theme-toggle .icon-sun { opacity: 1; transform: none; }
+[data-theme="light"] .theme-toggle .icon-moon { opacity: 0; transform: translateY(-9px) rotate(40deg) scale(.6); }
+@media (prefers-reduced-motion: reduce) {
+  button, .theme-toggle svg { transition: none; }
+  button:active:not(:disabled) { transform: none; }
+}
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .muted { color: var(--fg-dim); font-weight: 400; }
 .spacer { flex: 1; }
@@ -85,15 +363,61 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 #datasetName { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
 
+/* Return to the landing screen. Kept outside the controls cluster so it reads
+   as navigation rather than another review action. */
+.back-link {
+  color: var(--fg);
+  text-decoration: none;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-3);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.back-link:hover {
+  color: var(--fg);
+  background: var(--bg-4);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+/* In a bounty the exit lives in the bounty bar, one row lower and next to the
+   work it leaves. Two links to the same place on screen would just compete. */
+body.has-bounty #topbar .back-link { display: none; }
+
+/* The header must never push navigation off the right edge: the back link and
+   the Frames/Video switch are how you leave a session, so the progress readout
+   is what gives ground first. */
+#topbar { overflow: hidden; }
+.controls { flex-shrink: 0; }
+.progress { min-width: 80px; }
+@media (max-width: 1240px) {
+  #topbar { gap: 10px; }
+  #progressText { display: none; }
+}
+@media (max-width: 1040px) {
+  #datasetName { max-width: 110px; }
+  #appMode { margin-left: 0; }
+}
+
 .progress { display: flex; align-items: center; gap: 9px; flex: 1; max-width: 420px; }
 .progress .bar { flex: 1; height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
-#progressFill { height: 100%; width: 0%; background: var(--good); transition: width .2s ease; }
+#progressFill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: width .2s ease;
+}
 #progressText { white-space: nowrap; font-size: 12px; }
 
 .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 #searchBox { width: 160px; }
 .save-state { font-size: 12px; color: var(--fg-dim); min-width: 74px; text-align: right; }
-.save-state.dirty { color: var(--warn); }
+.save-state.dirty { color: var(--info-text); }
 .save-state.saved { color: var(--good); }
 .save-state.error { color: var(--bad); }
 
@@ -118,17 +442,18 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   position: relative;
   display: block;
   width: 100%;
+  height: auto;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
-  background: #0d0f12;
+  background: var(--bg-sunken);
   aspect-ratio: 16 / 9;
 }
-.thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.thumb:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumb.current { border-color: var(--accent); }
+.thumb.current, .thumb.current:hover { border-color: var(--accent); }
 .thumb .status-dot {
   position: absolute;
   top: 4px; right: 4px;
@@ -149,18 +474,18 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   background: rgba(0,0,0,.68);
   color: #dfe4ec;
 }
-.thumb .badge.none { color: var(--warn); }
+.thumb .badge.none { color: var(--info-text); }
 .thumb .badge.score {
   left: auto; right: 4px;
   border: 1px solid rgba(255,255,255,.25);
   font-variant-numeric: tabular-nums;
 }
-.thumb .badge.score.low { background: rgba(53,192,122,.85); color: #062315; }
-.thumb .badge.score.mid { background: rgba(224,164,55,.9); color: #2a1c02; }
-.thumb .badge.score.high { background: rgba(229,83,75,.92); color: #2a0806; }
+.thumb .badge.score.low { background: var(--good); color: var(--on-good); }
+.thumb .badge.score.mid { background: var(--info); color: var(--on-info); }
+.thumb .badge.score.high { background: var(--bad); color: var(--on-bad); }
 
 /* ---------- stage / canvas ---------- */
-#stage { display: flex; flex-direction: column; min-width: 0; background: #0e1013; }
+#stage { display: flex; flex-direction: column; min-width: 0; background: var(--bg-sunken); }
 #canvasWrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #canvas.drawing { cursor: cell; }
@@ -168,10 +493,11 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .empty-note {
   position: absolute;
   top: 12px; left: 12px;
-  background: rgba(224, 164, 55, .13);
-  border: 1px solid rgba(224, 164, 55, .45);
-  color: var(--warn);
-  padding: 5px 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: inset 3px 0 0 var(--info);
+  color: var(--info-text);
+  padding: 6px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
@@ -190,7 +516,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .legend { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
 .legend .key { width: 16px; height: 0; display: inline-block; margin-left: 8px; }
 .legend .key.gt { border-top: 2px solid var(--good); }
-.legend .key.pred { border-top: 2px dashed var(--warn); }
+.legend .key.pred { border-top: 2px dashed var(--info); }
 .legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .legend-item[hidden] { display: none; }
 
@@ -207,31 +533,42 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   user-select: none;
 }
 .segmented {
-  display: flex;
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--h-control);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
+  background-color: var(--bg-3);
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
+  box-shadow: var(--bevel);
   overflow: hidden;
 }
 .seg {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px;
+  height: 100%;
+  padding: 0 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
   color: var(--fg-dim);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
 }
 .seg + .seg { border-left: 1px solid var(--line); }
-.seg:hover { background: var(--bg-3); color: var(--fg); }
-.seg:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.seg.on { color: var(--fg); font-weight: 600; }
-.seg.on[data-mode="labels"] { background: rgba(53,192,122,.16); box-shadow: inset 0 -2px 0 var(--good); }
-.seg.on[data-mode="model"] { background: rgba(224,164,55,.16); box-shadow: inset 0 -2px 0 var(--warn); }
-.seg.on[data-mode="both"] { background: rgba(74,158,255,.16); box-shadow: inset 0 -2px 0 var(--accent); }
+.seg:hover:not(:disabled) { background: var(--bg-4); border-color: transparent; color: var(--fg); box-shadow: none; }
+.seg:active:not(:disabled) { transform: none; box-shadow: none; }
+.seg:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.seg.on {
+  color: var(--fg);
+  font-weight: 600;
+  background: var(--sel);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
 .seg-count {
   font-variant-numeric: tabular-nums;
   font-size: 10px;
@@ -264,14 +601,15 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .score-pill {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 999px;
   background: var(--bg-3);
   border: 1px solid var(--line);
+  color: var(--fg-dim);
 }
-.score-pill.low { background: rgba(53,192,122,.18); border-color: var(--good); color: var(--good); }
-.score-pill.mid { background: rgba(224,164,55,.18); border-color: var(--warn); color: var(--warn); }
-.score-pill.high { background: rgba(229,83,75,.18); border-color: var(--bad); color: #ffb3ae; }
+.score-pill.low { color: var(--good-text); }
+.score-pill.mid { color: var(--info-text); }
+.score-pill.high { color: var(--bad-fg); }
 
 .metrics { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
 .metric {
@@ -282,19 +620,27 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   border: 1px solid var(--line);
   font-variant-numeric: tabular-nums;
 }
-.metric.bad { border-color: var(--bad); color: #ffb3ae; }
-.metric.warn { border-color: var(--warn); color: var(--warn); }
-.metric.ok { border-color: var(--good); color: var(--good); }
+.metric.bad { color: var(--bad-fg); }
+.metric.warn { color: var(--warn-text); }
+.metric.ok { color: var(--good-text); }
 .hint { margin: 4px 0 0; font-size: 11px; color: var(--fg-dim); }
 
-.ghost.adopt {
+.adopt {
   margin-top: 8px;
   width: 100%;
-  border-color: var(--warn);
-  color: var(--warn);
+  border-color: var(--line-strong);
+  color: var(--fg);
   font-weight: 600;
 }
-.ghost.adopt:hover { background: rgba(224,164,55,.16); }
+.adopt::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex: 0 0 auto;
+}
+button.adopt:hover:not(:disabled) { border-color: var(--info); background-color: var(--bg-4); }
 
 /* ---------- right panel ---------- */
 #panel {
@@ -311,14 +657,15 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
 .chip {
+  height: 24px;
   font-size: 11px;
-  padding: 3px 7px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--bg-3);
   cursor: pointer;
 }
-.chip.on { background: var(--bad); border-color: var(--bad); color: #2a0806; font-weight: 600; }
+.chip.on { background: var(--bg-4); border-color: var(--bad); color: var(--bad-fg); font-weight: 600; }
 .chip kbd { opacity: .6; margin-right: 3px; }
 
 textarea {
@@ -341,15 +688,15 @@ textarea {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
-.box-row.selected { background: rgba(74, 158, 255, .12); border-radius: 4px; }
+.box-row.selected { background: var(--bg-4); box-shadow: inset 2px 0 0 var(--accent); border-radius: 4px; }
 .box-row .swatch { width: 12px; height: 12px; border-radius: 3px; background: var(--accent); }
-.box-row .del { padding: 0; line-height: 1; font-size: 13px; }
+.box-row .del { height: auto; padding: 0; line-height: 1; font-size: 13px; }
 
 /* Boxes cannot be edited while the Model view has them hidden, so the list is
    inert rather than letting a click select something off screen. */
 .box-list.readonly { opacity: .5; pointer-events: none; }
 
-#warnList { margin: 6px 0 0; padding-left: 16px; color: var(--warn); font-size: 11px; }
+#warnList { margin: 6px 0 0; padding-left: 16px; color: var(--warn-text); font-size: 11px; }
 .journal { margin: 6px 0 0; padding: 0; list-style: none; font-size: 11px; color: var(--fg-dim); }
 .journal li { padding: 2px 0; border-bottom: 1px dotted var(--line); }
 
@@ -390,7 +737,7 @@ kbd {
   z-index: 50;
   font-size: 12px;
 }
-.toast.err { border-color: var(--bad); color: #ffb3ae; }
+.toast.err { color: var(--bad-fg); box-shadow: inset 3px 0 0 var(--bad), var(--shadow); }
 
 /* ---------------------------------------------------------------- video mode */
 .mode-switch { margin-left: 14px; flex-shrink: 0; }
@@ -464,21 +811,22 @@ body.role-expert .review-only { display: none !important; }
 /* ------------------------------------------------------------------ info "?" */
 .info {
   flex: 0 0 auto;
-  width: 17px;
-  height: 17px;
-  min-width: 17px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
   padding: 0;
   border-radius: 50%;
   border: 1px solid var(--line);
-  background: transparent;
+  background-color: var(--bg-3);
+  box-shadow: var(--bevel);
   color: var(--fg-dim);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
-.info:hover { border-color: var(--accent); color: var(--accent); background: rgba(74,158,255,.10); }
-.info[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); background: rgba(74,158,255,.18); }
+button.info:hover:not(:disabled) { border-color: var(--line-strong); color: var(--fg); background-color: var(--bg-4); }
+button.info[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-text); }
 
 .block-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
 .block-head h4 { margin: 0; }
@@ -492,13 +840,13 @@ body.role-expert .review-only { display: none !important; }
   overflow-y: auto;
   padding: 11px 13px 13px;
   background: var(--bg-2);
-  border: 1px solid #3a4150;
+  border: 1px solid var(--line-strong);
   border-radius: 9px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
+  box-shadow: var(--shadow);
 }
 .popover-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
 .popover-head strong { flex: 1; font-size: 13px; }
-.popover-body { font-size: 12.5px; color: #c6ccd8; line-height: 1.5; }
+.popover-body { font-size: 12.5px; color: var(--fg); line-height: 1.5; }
 .popover-body p { margin: 0 0 7px; }
 .popover-body p:last-child { margin-bottom: 0; }
 .popover-body kbd {
@@ -508,8 +856,6 @@ body.role-expert .review-only { display: none !important; }
   border-radius: 4px;
   font-size: 11px;
 }
-button.icon { padding: 0 6px; line-height: 1.3; }
-
 /* ------------------------------------------------------------------- status */
 .status-pill {
   display: inline-block;
@@ -521,9 +867,9 @@ button.icon { padding: 0 6px; line-height: 1.3; }
   border: 1px solid var(--line);
   color: var(--fg-dim);
 }
-.status-pill.good { color: var(--good); border-color: var(--good); background: rgba(53,192,122,.12); }
-.status-pill.bad { color: var(--bad); border-color: var(--bad); background: rgba(229,83,75,.12); }
-.status-pill.empty { color: var(--empty); border-color: var(--empty); background: rgba(122,127,138,.14); }
+.status-pill.good { color: var(--good-text); }
+.status-pill.bad { color: var(--bad-fg); }
+.status-pill.empty { color: var(--empty); }
 .status-pill.unreviewed { color: var(--fg-dim); }
 
 /* Compact box rows for the reviewer view: no coordinate maths on screen. */
@@ -534,16 +880,18 @@ button.icon { padding: 0 6px; line-height: 1.3; }
 .adopt.full { width: 100%; }
 
 /* Prompt for a reason without adding another element to the page. */
-.chips.needs-reason { outline: 2px dashed rgba(229,83,75,.55); outline-offset: 4px; border-radius: 6px; }
+.chips.needs-reason { outline: 1px dashed var(--bad); outline-offset: 4px; border-radius: 6px; }
 
 /* ------------------------------------------------------------------- bounty */
 #bountyBar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 9px;
   padding: 6px 14px;
-  background: linear-gradient(90deg, rgba(74,158,255,.14), rgba(74,158,255,.04));
+  background: var(--bg-2);
+  box-shadow: inset 3px 0 0 var(--accent);
   border-bottom: 1px solid var(--line);
   font-size: 12px;
 }
@@ -551,13 +899,100 @@ button.icon { padding: 0 6px; line-height: 1.3; }
   padding: 1px 7px;
   border-radius: 999px;
   background: var(--accent);
-  color: #06111f;
+  color: var(--on-accent);
   font-weight: 700;
   font-size: 10.5px;
   letter-spacing: .04em;
   text-transform: uppercase;
 }
 #bountyTitle { font-weight: 600; }
+
+/* Edit mode: the same bar, re-labelled. The note carries the one thing that
+   changes - a finished bounty may already have a PR. */
+.edit-note {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--info-text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.edit-note[hidden] { display: none !important; }
+body.edit-mode .bounty-pill { background: var(--info); color: var(--on-info); }
+
+/* -------------------------------------------------------------- view mode */
+/* Browsing a dataset writes nothing, so the bars share the bounty bar's shape
+   but not its accent: nothing here is "in progress". */
+#viewBar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px;
+  background: var(--bg-2);
+  box-shadow: inset 3px 0 0 var(--line-strong, #4a4a52);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.view-pill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+#viewDataset { font-weight: 600; }
+
+/* A data-integrity warning, not decoration: it stays until it is repaired. */
+.warn-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px;
+  background: var(--bg-2);
+  box-shadow: inset 3px 0 0 var(--warn-text);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.warn-pill {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  /* Gold fill with dark ink: legible on both themes, and it stays a *fill*
+     because amber text on paper is exactly the brown to avoid. */
+  background: var(--warn);
+  color: var(--on-warn);
+  font-weight: 800;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* Read-only browsing hides the affordances that imply a write. */
+body.view-mode #drawBtn,
+body.view-mode #addBoxBtn,
+body.view-mode #saveBtn,
+body.view-mode #undoBtn,
+body.view-mode #decideBlock,
+body.view-mode #fixBlock,
+body.view-mode #statusPill,
+body.bounty-locked #drawBtn,
+body.bounty-locked #addBoxBtn,
+body.bounty-locked #saveBtn,
+body.bounty-locked #undoBtn,
+body.bounty-locked #decideBlock,
+body.bounty-locked #fixBlock { display: none !important; }
+/* The cursor only suggests drawing where drawing is possible. */
+body.view-mode #canvas { cursor: default; }
 
 /* -------------------------------------------------------------- walkthrough */
 .tour-overlay { position: fixed; inset: 0; z-index: 80; }
@@ -582,19 +1017,19 @@ button.icon { padding: 0 6px; line-height: 1.3; }
   width: min(390px, calc(100vw - 20px));
   padding: 14px 16px 12px;
   background: var(--bg-2);
-  border: 1px solid #3f4757;
+  border: 1px solid var(--line-strong);
   border-radius: 10px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, .7);
+  box-shadow: var(--shadow);
 }
 .tour-step {
   font-size: 10.5px;
   letter-spacing: .07em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
   margin-bottom: 3px;
 }
 .tour-card h3 { margin: 0 0 7px; font-size: 15px; }
-.tour-body { font-size: 12.5px; line-height: 1.55; color: #c6ccd8; }
+.tour-body { font-size: 12.5px; line-height: 1.55; color: var(--fg); }
 .tour-body kbd {
   padding: 1px 4px;
   border: 1px solid var(--line);
@@ -603,11 +1038,32 @@ button.icon { padding: 0 6px; line-height: 1.3; }
   font-size: 11px;
 }
 .tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 13px; }
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #06111f;
-  font-weight: 700;
-}
-button.primary:hover { background: #63aeff; border-color: #63aeff; }
 .zoom-group { display: inline-flex; gap: 4px; }
+
+/* ---------------------------------------------------------------- material
+   One grain layer, applied last so component background shorthands cannot
+   strip it. Soft-light keeps the underlying colour intact and only adds the
+   tooth; the tile is static, so this costs nothing at runtime. */
+#topbar,
+#expertBar,
+#panel,
+#strip,
+#stageFooter,
+#bountyBar,
+.modal,
+.popover,
+.tour-card,
+.toast {
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
+}
+
+/* A hairline division between action clusters, so appearance controls do not
+   read as another review action. */
+.header-divider {
+  width: 1px;
+  height: 20px;
+  flex: 0 0 auto;
+  background: var(--line);
+  margin: 0 3px;
+}

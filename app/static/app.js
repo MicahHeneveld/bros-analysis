@@ -12,13 +12,41 @@
 (() => {
   'use strict';
 
+  // ------------------------------------------------------------- location
+  // Parsed before `state`, because the initial queue size depends on the mode.
+  // The landing screen opens one dataset at a time with ?dataset=<name>. Every
+  // API call carries it so several datasets can be open in different tabs
+  // without the server guessing which one a request means.
+  const PARAMS = new URLSearchParams(location.search);
+  const DATASET = PARAMS.get('dataset') || '';
+  // A bounty is a frame slice, so the queue is scoped to it server-side.
+  const BOUNTY_ID = PARAMS.get('bounty_id') || '';
+  // Reopening a finished bounty to double-check it. Same fixed slice, same
+  // writes; only the wording changes, plus a note when a PR already exists.
+  const EDIT_MODE = PARAMS.get('edit') === '1';
+  const PR_EXISTS = PARAMS.get('pr') === '1';
+  // `/view` is read-only browsing of a whole dataset (images + source video).
+  // It is the only mode that does not require a bounty, because it writes
+  // nothing. `/review` is the working mode and always needs one.
+  const VIEW_MODE = /^\/view\/?$/.test(location.pathname);
+  const REVIEW_MODE = !VIEW_MODE;
+
+  if (REVIEW_MODE && !BOUNTY_ID) {
+    // Label mode is bounty-scoped by definition. Without a bounty the strip
+    // used to show the whole dataset with a "Load more" button, which is how
+    // reviewers ended up labelling frames that no bounty was paying for.
+    location.replace('/');
+  }
+
   // ---------------------------------------------------------------- state
   const state = {
     dataset: null,
     samples: [],
     total: 0,
     offset: 0,
-    limit: 200,
+    // A bounty slice is fixed, so label mode loads all of it at once: a
+    // "Load more" button in a 250-frame bounty is just a way to miss frames.
+    limit: REVIEW_MODE ? Math.max(200, Number(PARAMS.get('of')) || 500) : 200,
     index: 0,
     current: null,          // full sample detail from the server
     image: null,            // HTMLImageElement
@@ -36,6 +64,7 @@
     drag: null,
     reasons: [],
     reasonCodes: {},
+    integrityDismissed: false,
     // Which box set the canvas shows: 'labels' (yours, editable), 'model'
     // (predictions, read-only) or 'both' (overlay, where editing and adopting
     // happen). The counts live on the toggle in the stage footer.
@@ -335,8 +364,23 @@
   // next to). Every interaction gate funnels through these three helpers.
   function predsVisible() { return state.viewMode !== 'labels'; }
   function labelsVisible() { return state.viewMode !== 'model'; }
-  function editingEnabled() { return state.viewMode !== 'model'; }
-  function adoptEnabled() { return state.viewMode === 'both'; }
+  // One choke point for "may this session write at all". View mode is read-only,
+  // so it fails these checks the same way Model view does, and every caller
+  // already renders a sensible explanation. A submitted bounty is read-only for
+  // the same reason: its labels are now the contents of a PR. The server refuses
+  // these writes too - this only keeps the UI from asking for something it knows
+  // will be rejected.
+  function editingEnabled() {
+    return !VIEW_MODE && !PR_EXISTS && state.viewMode !== 'model';
+  }
+  function adoptEnabled() {
+    return !VIEW_MODE && !PR_EXISTS && state.viewMode === 'both';
+  }
+  function writeBlockedMessage() {
+    if (PR_EXISTS) return 'This bounty was submitted, so its labels are locked';
+    return VIEW_MODE ? 'View mode is read-only — open this bounty to label'
+      : 'Switch to Labels or Both to edit boxes';
+  }
 
   // ------------------------------------------------------------- utilities
   function toast(msg, isError = false) {
@@ -348,8 +392,13 @@
     toast._t = setTimeout(() => { el.hidden = true; }, 2200);
   }
 
+  function withDataset(path) {
+    if (!DATASET || !path.startsWith('/api/')) return path;
+    return path + (path.includes('?') ? '&' : '?') + 'dataset=' + encodeURIComponent(DATASET);
+  }
+
   async function api(path, options = {}) {
-    const res = await fetch(path, {
+    const res = await fetch(withDataset(path), {
       headers: { 'Content-Type': 'application/json' },
       ...options,
     });
@@ -503,12 +552,12 @@
       state.boxes.forEach((b, i) => {
         const s = boxScreen(b);
         const isSel = i === state.selected;
-        ctx.strokeStyle = isSel ? '#4a9eff' : '#35c07a';
+        ctx.strokeStyle = isSel ? '#ff6b1a' : '#35c07a';
         ctx.lineWidth = isSel ? 2.5 : 2;
         ctx.strokeRect(s.x, s.y, s.w, s.h);
 
         if (state.boxes.length > 1) {
-          ctx.fillStyle = isSel ? '#4a9eff' : '#35c07a';
+          ctx.fillStyle = isSel ? '#ff6b1a' : '#35c07a';
           ctx.font = '600 11px -apple-system, sans-serif';
           ctx.fillText(String(i + 1), s.x + 3, s.y + 12);
         }
@@ -517,7 +566,7 @@
           const pts = handlePoints(s);
           HANDLE_ORDER.forEach((k) => {
             ctx.fillStyle = '#14161a';
-            ctx.strokeStyle = '#4a9eff';
+            ctx.strokeStyle = '#ff6b1a';
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.rect(pts[k].x - 4, pts[k].y - 4, 8, 8);
@@ -595,7 +644,7 @@
   }
 
   function adoptPreds(indices) {
-    if (!indices.length) return;
+    if (VIEW_MODE || !indices.length) return;
     const preds = state.current.predictions || [];
     const existing = new Set(state.boxes.map((b) => `${b.xc.toFixed(4)},${b.yc.toFixed(4)}`));
     pushUndo();
@@ -621,6 +670,10 @@
   }
 
   function adoptAllMissing() {
+    if (VIEW_MODE) {
+      toast('View mode is read-only');
+      return;
+    }
     if (!adoptEnabled()) {
       toast('Adopting works in Both view');
       return;
@@ -660,7 +713,7 @@
   }
 
   async function saveNow(silent = false) {
-    if (!state.current) return;
+    if (VIEW_MODE || PR_EXISTS || !state.current) return;
     // Snapshot everything up front: the selection can change while the write is
     // in flight, and the response must not be applied to a different image.
     const imageId = state.current.image_id;
@@ -679,7 +732,7 @@
     try {
       const resp = await api(`/api/sample/${encId(imageId)}/labels`, {
         method: 'PUT',
-        body: JSON.stringify({ boxes, reason: 'canvas_edit' }),
+        body: JSON.stringify({ boxes, reason: 'canvas_edit', bounty_id: BOUNTY_ID }),
       });
       if (state.current && state.current.image_id === imageId) {
         state.savedBoxes = cloneBoxes(boxes);
@@ -751,6 +804,47 @@
       $('sortFilter').value = 'unreviewed';
     }
     renderProgress();
+    renderIntegrity();
+  }
+
+  /**
+   * Warn about frames that are "good" with no boxes on disk.
+   *
+   * This is the visible half of the save-order bug: those frames look finished
+   * on the board but contribute nothing to a dataset, so no bounty PR can be
+   * paid for them. The repair returns them to the queue instead of inventing
+   * labels.
+   */
+  function renderIntegrity() {
+    const bar = $('integrityBar');
+    if (!bar) return;
+    const n = (state.dataset && state.dataset.integrity
+      && state.dataset.integrity.good_without_labels) || 0;
+    bar.hidden = n === 0 || state.integrityDismissed;
+    if (!n) return;
+    $('integrityText').textContent = n === 1
+      ? '1 frame is marked good but has no labels'
+      : `${n} frames are marked good but have no labels`;
+    // Repairing rewrites review state, so it is not offered while browsing.
+    $('integrityFix').hidden = VIEW_MODE;
+  }
+
+  async function repairIntegrity() {
+    const btn = $('integrityFix');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/integrity/repair', { method: 'POST', body: '{}' });
+      toast(res.reset === 1
+        ? '1 frame returned to the queue'
+        : `${res.reset} frames returned to the queue`);
+      state.integrityDismissed = true;
+      await loadDataset();
+      await loadSamples(true);
+    } catch (err) {
+      toast('Repair failed: ' + err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function currentFilters() {
@@ -776,6 +870,7 @@
       sort: f.sort, kind: f.kind, flag: f.flag,
       offset: String(state.offset), limit: String(state.limit),
     });
+    if (BOUNTY_ID) params.set('bounty', BOUNTY_ID);
     const data = await api('/api/samples?' + params.toString());
     state.total = data.total;
     state.reviewedTotal = data.reviewed || 0;
@@ -783,7 +878,7 @@
     state.offset = state.samples.length;
     renderStrip(reset);
     renderProgress();
-    $('loadMore').hidden = state.samples.length >= state.total;
+    $('loadMore').hidden = REVIEW_MODE || state.samples.length >= state.total;
     if (reset) {
       if (state.samples.length === 0) {
         state.current = null;
@@ -818,7 +913,7 @@
       const img = new Image();
       img.onload = () => { state.image = img; resolve(); };
       img.onerror = () => { state.image = null; resolve(); };
-      img.src = '/api/image/' + encId(imageId);
+      img.src = withDataset('/api/image/' + encId(imageId));
     });
 
     if (state.view.fitted === false) fitView();
@@ -833,9 +928,11 @@
     }
   }
 
-  function selectIndex(i) {
+  async function selectIndex(i) {
     if (i < 0 || i >= state.samples.length) return;
-    if (state.dirty) saveNow(true);
+    // Await the write: navigating used to fire-and-forget the PUT, so a quick
+    // refresh could abandon the save for the frame you just left.
+    if (state.dirty) await saveNow(true);
     state.index = i;
     const row = state.samples[i];
     highlightThumb(row.image_id);
@@ -885,7 +982,7 @@
 
     const img = document.createElement('img');
     img.loading = 'lazy';
-    img.src = '/api/thumb/' + encId(row.image_id);
+    img.src = withDataset('/api/thumb/' + encId(row.image_id));
     img.alt = row.stem;
     el.appendChild(img);
 
@@ -1172,7 +1269,7 @@
 
   function addBox() {
     if (!editingEnabled()) {
-      toast('Switch to Labels or Both to edit boxes');
+      toast(writeBlockedMessage());
       return;
     }
     pushUndo();
@@ -1188,7 +1285,7 @@
     try {
       const data = await api(`/api/sample/${encId(state.current.image_id)}/review`, {
         method: 'POST',
-        body: JSON.stringify({ status, reasons: state.reasons, note: $('noteBox').value }),
+        body: JSON.stringify({ status, reasons: state.reasons, note: $('noteBox').value, bounty_id: BOUNTY_ID }),
       });
       const imageId = state.current.image_id;
       const prevStatus = state.current.status;
@@ -1206,7 +1303,7 @@
       // The dataset-wide tally lives on the server; refresh it before painting
       // progress so the header numbers are not a step behind.
       try {
-        state.dataset.review = (await (await fetch('/api/dataset')).json()).review;
+        state.dataset.review = (await api('/api/dataset')).review;
       } catch (_) { /* header counts are cosmetic */ }
       renderProgress();
       syncChips();
@@ -1222,27 +1319,45 @@
   }
 
   async function markGood() {
+    if (VIEW_MODE) return toast(writeBlockedMessage(), true);
     // Clearing reasons matters: a stale reason from the previous bad frame
     // would otherwise be recorded against a good one.
     state.reasons = [];
     syncChips();
-    await postReview('good');
+    if (!state.boxes.length) {
+      // "Good" approves the boxes on the frame, so there have to be some. The
+      // server enforces this too; saying it here avoids a round-trip and a
+      // scary error for what is a normal thing to get wrong.
+      toast('No boxes on this frame — draw one, adopt the model’s, or press n for Empty', true);
+      return;
+    }
+    // Persist the labels *before* recording the review. The other order left a
+    // window where a refresh could land between the two writes, producing a
+    // frame marked good whose label file was still empty.
+    if (state.dirty) await saveNow(true);
+    const status = await postReview('good');
+    if (!status) return;   // the review failed; stay on this frame
     toast('Marked good');
     step(1);
   }
 
   async function markEmpty() {
+    if (VIEW_MODE) return toast(writeBlockedMessage(), true);
     state.reasons = [];
     syncChips();
-    await postReview('empty');
+    if (state.dirty) await saveNow(true);
+    const status = await postReview('empty');
+    if (!status) return;
     toast('Marked reviewed-empty');
     step(1);
   }
 
   async function markBad() {
+    if (VIEW_MODE) return toast(writeBlockedMessage(), true);
     // A reason is strongly encouraged but not a precondition: gating on it
     // deadlocked the UI, because the chips that set a reason only appear once
     // the frame is already marked bad.
+    if (state.dirty) await saveNow(true);
     await postReview('bad');
     toast(state.reasons.length
       ? 'Needs fixing: ' + state.reasons.join(', ')
@@ -1545,7 +1660,7 @@
 
   function toggleDraw() {
     if (!editingEnabled()) {
-      toast('Switch to Labels or Both to edit boxes');
+      toast(writeBlockedMessage());
       return;
     }
     state.drawing = !state.drawing;
@@ -2000,6 +2115,11 @@
       searchTimer = setTimeout(() => loadSamples(true), 250);
     });
     $('loadMore').addEventListener('click', () => loadSamples(false));
+    $('integrityFix').addEventListener('click', repairIntegrity);
+    $('integrityHide').addEventListener('click', () => {
+      state.integrityDismissed = true;
+      renderIntegrity();
+    });
 
     $('markGood').addEventListener('click', markGood);
     $('markBad').addEventListener('click', markBad);
@@ -2013,7 +2133,10 @@
       if (state.dirty) { undo(); return; }
       if (!state.current) return;
       try {
-        const res = await api('/api/undo/' + encId(state.current.image_id), { method: 'POST', body: '{}' });
+        const res = await api('/api/undo/' + encId(state.current.image_id), {
+          method: 'POST',
+          body: JSON.stringify({ bounty_id: BOUNTY_ID }),
+        });
         if (res.restored) {
           toast('Reverted last saved edit from journal');
           await loadSample(state.current.image_id);
@@ -2077,6 +2200,23 @@
     });
     $('tourBtn').addEventListener('click', () => startTour(true));
 
+    // Leaving a session must not drop the last edit: autosave is a debounce, so
+    // a click that lands inside the window would otherwise discard it. If the
+    // flush fails we stay put rather than walk away from unsaved work.
+    for (const el of document.querySelectorAll('.back-link')) {
+      el.addEventListener('click', async (ev) => {
+        if (VIEW_MODE || !state.dirty || !state.current) return;
+        ev.preventDefault();
+        const href = el.getAttribute('href') || '/';
+        await saveNow(true);
+        if (state.dirty && state.current) {
+          toast('Could not save this frame, so you are still here.', true);
+          return;
+        }
+        location.href = href;
+      });
+    }
+
     window.addEventListener('resize', resizeCanvas);
     window.addEventListener('resize', () => {
       hidePopover();
@@ -2128,16 +2268,70 @@
    * link cannot overstate what is done.
    */
   function initBounty() {
-    const params = new URLSearchParams(location.search);
-    const title = params.get('bounty');
+    // `bounty` carries the human title; `bounty_id` is always present in label
+    // mode. Falling back to the id means a bookmarked or hand-edited URL still
+    // shows the bar instead of silently looking like an unscoped session.
+    const title = PARAMS.get('bounty') || BOUNTY_ID;
     if (!title) return;
     $('bountyTitle').textContent = title;
     $('bountyBar').hidden = false;
     document.body.classList.add('has-bounty');
+    applyEditMode();
     updateBountyProgress();
     // The walkthrough is the onboarding step for a claimed bounty, so it runs
     // once per contributor rather than once per bounty.
     startTour(false);
+  }
+
+  /**
+   * Editing a completed bounty is the same screen with a different contract:
+   * the slice is fixed and already reviewed, so the work is double-checking
+   * rather than labelling. Say so, and say what happens on submit - a second
+   * submit updates the existing PR instead of opening another one.
+   */
+  function applyEditMode() {
+    if (!EDIT_MODE && !PR_EXISTS) return;
+    const pill = $('bountyPill');
+    document.body.classList.add('edit-mode');
+    const note = $('editNote');
+    if (PR_EXISTS) {
+      // Submitted: the labels are the content of a PR, so they are frozen. The
+      // server refuses writes too; this just stops the screen from inviting
+      // them. Reached only from a stale link - the board no longer offers Edit.
+      if (pill) pill.textContent = 'Submitted';
+      document.body.classList.add('bounty-locked');
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'submitted · labels are locked while the PR is open';
+      }
+      return;
+    }
+    if (pill) pill.textContent = 'Editing';
+    if (!note) return;
+    note.hidden = false;
+    note.textContent = 'complete · double-check the labels, then submit from the board';
+  }
+
+  /** Read-only chrome for /view: no decisions, no editing, no autosave. */
+  function applyViewMode() {
+    document.body.classList.add('view-mode');
+    $('viewBar').hidden = false;
+    $('viewDataset').textContent = DATASET || 'dataset';
+    const back = $('backToBoard');
+    back.textContent = '← All datasets';
+    back.title = 'Back to datasets and bounties';
+    // Anything that would write is removed rather than disabled: a greyed-out
+    // "Good" button invites a click and then an explanation.
+    for (const id of ['decideBlock', 'fixBlock']) {
+      const el = $(id);
+      if (el) el.hidden = true;
+    }
+    for (const id of ['drawBtn', 'addBoxBtn', 'saveBtn', 'undoBtn']) {
+      const el = $(id);
+      if (el) el.hidden = true;
+    }
+    $('statusPill').hidden = true;
+    document.title = `${DATASET || 'Dataset'} — view`;
   }
 
   function updateBountyProgress() {
@@ -2171,6 +2365,7 @@
 
     try {
       await loadDataset();
+      if (VIEW_MODE) applyViewMode();
       // After loadDataset, since it may hide filters that do not apply and
       // resets the sort default.
       const applied = applyUrlFilters();
@@ -2180,16 +2375,14 @@
       setInterval(loadJournal, 15000);
       updateBountyProgress();
       initBounty();
-      // An explicit ?mode= wins in both directions. Only falling back to the
-      // remembered mode when there is no mode in the URL avoids the trap where
-      // a shared ?mode=images link opened video because that is what this
-      // browser last used.
+      // An explicit ?mode= wins in both directions. The remembered mode is only
+      // used while browsing: landing in Video because the last mp4 was watched
+      // would hide the strip exactly when someone opened a bounty to label it.
       let mode = 'images';
-      const params = new URLSearchParams(location.search);
-      const modeParam = params.get('mode');
+      const modeParam = PARAMS.get('mode');
       if (modeParam === 'video' || modeParam === 'images') {
         mode = modeParam;
-      } else {
+      } else if (VIEW_MODE) {
         try {
           const saved = localStorage.getItem('ssbu.appMode');
           if (saved === 'video') mode = 'video';

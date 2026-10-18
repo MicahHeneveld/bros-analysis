@@ -1,0 +1,819 @@
+/* Landing screen. Reuses the review app's tokens and control styles; only the
+   page shell, cards and progress rings are new. Everything here is a matte
+   solid — the single glow is the fill inside progress bars. */
+
+body.landing-body {
+  display: block;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--bg);
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------ top bar */
+#landingTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--line);
+  background-color: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+#landingTop .brand { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+#landingTop .brand .dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent-glow);
+  animation: dotPulse 3.4s ease-out infinite;
+}
+@keyframes dotPulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  55% { box-shadow: 0 0 0 9px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.quiet-link {
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: color .14s ease, background-color .14s ease;
+}
+.quiet-link:hover { color: var(--fg); background: var(--bg-3); }
+
+.gh-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh-chip::before {
+  content: '';
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--empty);
+  flex: 0 0 auto;
+}
+.gh-chip.ok::before { background: var(--good); box-shadow: 0 0 6px rgba(63, 180, 107, .7); }
+.gh-chip.warn::before { background: var(--warn); }
+.gh-chip.bad::before { background: var(--bad); }
+.gh-chip.ok { color: var(--fg); }
+
+/* Only the failed state is a control: it retries the sync on click. */
+.gh-chip.retryable {
+  cursor: pointer;
+  transition: border-color .16s ease, background-color .16s ease, color .16s ease;
+}
+.gh-chip.retryable:hover,
+.gh-chip.retryable:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--bg-3);
+  color: var(--fg);
+  outline: none;
+}
+.gh-chip.retryable:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* ------------------------------------------------------------ warning */
+.claim-warn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 22px 0;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+  border-radius: 10px;
+  color: var(--info-text);
+  animation: warnIn .5s cubic-bezier(.2, .8, .2, 1) both;
+}
+.claim-warn[hidden] { display: none !important; }
+@keyframes warnIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.warn-glyph { width: 20px; height: 20px; flex: 0 0 auto; color: var(--info); }
+.warn-text { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.warn-text strong { color: var(--info-text); font-size: 13px; }
+.warn-text .muted { color: var(--fg-dim); }
+.claim-warn .quiet-link { margin-left: auto; color: var(--info-text); }
+.claim-warn .quiet-link:hover { background: var(--info); color: var(--on-info); }
+
+/* ------------------------------------------------------------ layout */
+#landingMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 352px;
+  gap: 22px;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 22px;
+  align-items: start;
+}
+
+.pane-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.pane-head h1 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
+.pane-head p { margin: 4px 0 0; font-size: 12.5px; }
+
+.add-btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.add-glyph { width: 15px; height: 15px; }
+
+/* ------------------------------------------------------------ datasets */
+.dataset-list { display: flex; flex-direction: column; gap: 12px; }
+
+.dataset-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+  overflow: hidden;
+  animation: cardIn .46s cubic-bezier(.2, .8, .2, 1) both;
+  animation-delay: var(--delay, 0ms);
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.dataset-card:hover { border-color: var(--line-strong); }
+.dataset-card.selected {
+  border-color: var(--line-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ds-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+}
+.ds-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ds-name {
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-meta { font-size: 11.5px; color: var(--fg-dim); }
+
+.kind-chip {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-weight: 650;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.kind-chip.published { color: var(--accent-text); }
+.kind-chip.scratch { color: var(--info-text); }
+
+.ds-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.ds-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* View is the one action on a card that is always safe, always available and
+   never writes, so it is the only one that gets an icon, the full control
+   height and an accent edge. Everything else stays a quiet utility button. */
+button.view-btn {
+  height: var(--h-control);
+  padding: 0 13px;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--accent-text);
+  background-color: var(--bg-2);
+  border-color: var(--line-strong);
+}
+button.view-btn:hover:not(:disabled) {
+  color: var(--accent-text);
+  background-color: var(--bg-3);
+  border-color: var(--accent);
+  box-shadow: var(--bevel-strong), var(--lift);
+}
+/* The eye keeps the brand colour while the label stays ink: on paper an orange
+   word at this size would have to go dark to be legible, an icon does not. */
+button.view-btn svg { color: var(--accent); }
+
+.bar { background: var(--bg-3); border-radius: 999px; overflow: hidden; height: 6px; }
+.bar.tall { height: 9px; }
+/* Solid fills with a single halo — the one place a glow is allowed. */
+.bar > div {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  transition: width .9s cubic-bezier(.2, .8, .2, 1);
+}
+.bar.gold > div { background: var(--info); box-shadow: 0 0 10px var(--info-glow); }
+.bar.green > div { background: var(--good); box-shadow: 0 0 10px rgba(63, 180, 107, .35); }
+
+.ds-progress { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 5px; }
+.ds-progress-row { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--fg-dim); }
+
+/* bounty accordion */
+.bounty-menu { border-top: 1px solid var(--line); }
+.bounty-menu > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  list-style: none;
+  user-select: none;
+}
+.bounty-menu > summary::-webkit-details-marker { display: none; }
+.bounty-menu > summary:hover { background: var(--bg-3); color: var(--fg); }
+.caret {
+  width: 13px; height: 13px;
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1);
+  color: var(--fg-dim);
+}
+.bounty-menu[open] > summary .caret { transform: rotate(90deg); }
+.count-pill {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--fg-dim);
+}
+
+.bounty-list { padding: 2px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+
+.bounty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 132px auto;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--bg-3);
+  transition: border-color .16s ease, background-color .16s ease;
+
+  /* Staggered intro: each row is a little later than the one above it. */
+  animation: rowIn .34s ease-out both;
+  animation-delay: var(--delay, 0ms);
+}
+@keyframes rowIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.bounty:hover { border-color: var(--line-strong); background: var(--bg-4); }
+.bounty.selected {
+  border-color: var(--line-strong);
+  background: var(--bg-4);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.bounty-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bounty-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bounty-sub { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--fg-dim); }
+
+.status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--accent);
+}
+.status-dot.claimed { background: var(--info); box-shadow: 0 0 7px var(--info-glow); }
+.status-dot.done { background: var(--good); }
+
+.points-chip {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--accent-text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.bounty-progress { display: flex; flex-direction: column; gap: 4px; }
+.bounty-progress .mini { font-variant-numeric: tabular-nums; }
+
+.bounty-actions { display: flex; align-items: center; gap: 6px; }
+
+/* Row-level actions are neutral controls with a semantic text colour. `.primary`
+   is deliberately not allowed to paint its accent fill here: accent text on an
+   accent fill is unreadable, and a card can hold six bounties. The screen's one
+   filled action stays "Add dataset".
+
+   These are compound selectors on purpose — `button.primary` is (0,1,1) and
+   would win over a bare `.claim-btn` class. */
+.claim-btn.primary,
+.open-labels.primary {
+  background-color: var(--bg-3);
+  border-color: var(--line);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+button.claim-btn.primary:hover:not(:disabled),
+button.open-labels.primary:hover:not(:disabled) {
+  background-color: var(--bg-4);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.claim-btn.claimed { color: var(--info-text); font-weight: 600; }
+button.claim-btn.claimed:hover:not(:disabled) { color: var(--info-text); border-color: var(--info); }
+.claim-btn.done { color: var(--good-text); }
+button.claim-btn.done:hover:not(:disabled) { color: var(--good-text); border-color: var(--good); }
+
+/* A finished bounty is a state, not a button: it used to be a claim button that
+   only ever produced "already complete" toast. Now it is a chip, and the action
+   next to it is Edit, which reopens the same fixed slice. */
+.done-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--h-control-sm);
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--good-text);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.done-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  flex: 0 0 auto;
+}
+/* Submitted is shipped, not merely finished: neutral-cool, because the work is
+   out of your hands until the PR merges. */
+.done-chip.submitted { color: var(--info-text); }
+.done-chip.submitted::before { background: var(--info); }
+button.edit-btn { color: var(--accent-text); border-color: var(--line-strong); font-weight: 600; }
+button.edit-btn:hover:not(:disabled) {
+  color: var(--accent-text);
+  border-color: var(--accent);
+  background-color: var(--bg-4);
+}
+
+.bounty-pending {
+  font-size: 10.5px;
+  color: var(--warn-text);
+  border: 1px dashed var(--line-strong);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.ds-foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-sunken);
+}
+.ds-hint { font-size: 11.5px; color: var(--fg-dim); }
+.open-labels { font-weight: 650; }
+.open-labels::after { content: ' →'; }
+
+.empty-note-card {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.empty-note-card .quiet-link { padding: 0 2px; color: var(--accent-text); }
+
+/* ------------------------------------------------------------ overview */
+#overviewPane {
+  position: sticky;
+  top: 78px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rings-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-2);
+  padding: 16px;
+}
+.rings-head { display: flex; align-items: flex-start; gap: 10px; }
+.rings-head h2 { margin: 0; font-size: 14px; }
+.rings-head p { margin: 3px 0 0; font-size: 11.5px; }
+.rings-head .kind-chip { margin-left: auto; }
+
+.rings-wrap { position: relative; display: grid; place-items: center; padding: 12px 0 6px; }
+#rings { width: 216px; height: 216px; overflow: visible; }
+
+.ring-track { fill: none; stroke: var(--bg-3); stroke-width: 13; }
+.ring-track.inner { stroke: var(--bg-4); stroke-width: 11; }
+.ring-fill {
+  fill: none;
+  stroke-width: 13;
+  stroke-linecap: round;
+  /* JS sets stroke-dasharray to the circumference and animates the offset from
+     full (empty arc) to the target. */
+  stroke-dasharray: 0 1000;
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 1.1s cubic-bezier(.2, .8, .2, 1), stroke .3s ease;
+}
+.ring-fill.dataset {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+.ring-fill.bounty {
+  stroke: var(--info);
+  stroke-width: 11;
+  filter: drop-shadow(0 0 6px var(--info-glow));
+}
+
+.rings-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
+}
+.ring-percent {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ring-caption { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--fg-dim); }
+
+.legend {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+/* stretch, not center: a centred column item is sized to its max-content, so a
+   long bounty name used to grow its row past the card instead of eliding. */
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+.legend b { margin-left: auto; flex: 0 0 auto; color: var(--fg); font-variant-numeric: tabular-nums; }
+.swatch { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+.swatch.dataset { background: var(--accent); }
+.swatch.bounty { background: var(--info); }
+.legend-label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.rings-foot {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  min-height: 16px;
+}
+
+.stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+.stat {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: cardIn .5s cubic-bezier(.2, .8, .2, 1) both;
+  animation-delay: var(--delay, 0ms);
+}
+.stat-value { font-size: 19px; font-weight: 680; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); }
+
+/* ------------------------------------------------------------ leaderboard */
+.leader-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-2);
+  padding: 14px 14px 6px;
+}
+.leader-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.leader-head h2 { margin: 0; font-size: 13px; letter-spacing: -.01em; }
+.leader-scope {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.leader-list { list-style: none; margin: 0; padding: 0; }
+.leader-row {
+  display: grid;
+  grid-template-columns: 14px 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.leader-row:first-child { border-top: 0; }
+.leader-rank {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-align: right;
+}
+.leader-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--fg-dim);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  box-shadow: var(--bevel);
+}
+.leader-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.leader-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leader-sub { font-size: 10.5px; color: var(--fg-dim); }
+.leader-points {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.leader-row.me .leader-name { color: var(--accent-text); }
+.leader-row.me .leader-avatar { border-color: var(--accent); color: var(--accent-text); }
+.leader-empty { font-size: 11.5px; margin: 2px 0 10px; }
+
+/* ------------------------------------------------------------ job card */
+.job-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+  padding: 13px 14px;
+  animation: cardIn .4s ease both;
+}
+.job-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.job-head strong { font-size: 12.5px; }
+.job-card .bar { margin-bottom: 8px; }
+.job-log {
+  margin: 8px 0 0;
+  max-height: 108px;
+  overflow: auto;
+  font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg-dim);
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 9px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.job-steps { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.job-step { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-dim); }
+.job-step::before {
+  content: '';
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--empty);
+  flex: 0 0 auto;
+}
+.job-step.active { color: var(--fg); }
+.job-step.active::before { background: var(--accent); animation: stepPulse 1.4s ease-in-out infinite; }
+.job-step.done::before { background: var(--good); }
+.job-step.failed::before { background: var(--bad); }
+@keyframes stepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50% { box-shadow: 0 0 0 5px transparent; }
+}
+
+/* ------------------------------------------------------------ modal */
+.add-modal { width: min(560px, calc(100vw - 32px)); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modal-head h3 { margin: 0; }
+.add-blurb { font-size: 12.5px; margin: 6px 0 14px; }
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 26px 16px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 11px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color .18s ease, background-color .18s ease;
+  margin-bottom: 14px;
+}
+.dropzone:hover, .dropzone.drag {
+  border-color: var(--accent);
+  background: var(--bg-3);
+}
+.dropzone svg { width: 26px; height: 26px; color: var(--accent); }
+.dropzone span { font-size: 12.5px; }
+.dropzone #dropMeta { min-height: 14px; }
+
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: 12px; }
+.field > span:first-child { font-weight: 600; color: var(--fg-dim); font-size: 11.5px; }
+.field input, .field select { width: 100%; }
+.field code { background: var(--bg-3); padding: 1px 4px; border-radius: 4px; font-size: 10.5px; }
+
+.check { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+.modal-actions { margin-top: 16px; }
+.err { color: var(--bad-fg); max-width: 55%; }
+
+/* ------------------------------------------------------------ toast */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+  z-index: 60;
+  animation: toastIn .22s ease both;
+}
+.toast.err { color: var(--bad-fg); box-shadow: inset 3px 0 0 var(--bad), var(--shadow); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ------------------------------------------------------------ responsive */
+@media (max-width: 1080px) {
+  #landingMain { grid-template-columns: minmax(0, 1fr); }
+  #overviewPane { position: static; order: -1; }
+  .stat-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 760px) {
+  #landingTop { padding: 0 14px; gap: 8px; }
+  #repoLink { display: none; }
+}
+@media (max-width: 600px) {
+  #ghChip { display: none; }
+}
+@media (max-width: 720px) {
+  #landingMain { padding: 14px; }
+  .claim-warn { margin: 12px 14px 0; flex-wrap: wrap; }
+  .claim-warn .quiet-link { margin-left: 0; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .bounty { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'dot main' 'prog prog' 'act act'; }
+  .bounty .bounty-progress { grid-area: prog; }
+  .bounty .bounty-actions { grid-area: act; justify-content: flex-end; }
+}
+
+/* ------------------------------------------------------------ motion */
+@media (prefers-reduced-motion: reduce) {
+  #landingTop .brand .dot,
+  .claim-warn,
+  .dataset-card,
+  .bounty,
+  .stat,
+  .job-step.active::before,
+  .toast { animation: none !important; }
+  .bar > div,
+  .ring-fill,
+  .caret { transition: none !important; }
+}
+
+/* ------------------------------------------------------------ material
+   Same grain tile as the review app; the bevel is the only extra shadow on a
+   card, which is what keeps a flat surface from looking like a placeholder. */
+.dataset-card,
+.rings-card,
+.stat,
+.job-card,
+.leader-card,
+.submit-card {
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
+  box-shadow: var(--bevel);
+}
+.bounty {
+  background-image: var(--grain);
+  background-blend-mode: soft-light;
+}
+
+/* -------------------------------------------------------------- submit */
+.submit-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-2);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.submit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.submit-head h2 { margin: 0; font-size: 13px; letter-spacing: -.01em; }
+.submit-hint { margin: 0; line-height: 1.45; }
+.submit-btn { width: 100%; }
+
+.submit-modal { width: min(560px, calc(100vw - 32px)); }
+.submit-blurb { font-size: 12.5px; margin: 6px 0 12px; }
+.submit-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.submit-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.submit-item:first-child { border-top: 0; }
+.submit-item-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.submit-item-title {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Excluded work stays legible rather than hidden: the reason it cannot be
+   submitted is the answer to "what about my unfinished bounties?". */
+.submit-item:not(.ready) { opacity: .62; }
+.submit-item.failed { border-left: 2px solid var(--bad); padding-left: 8px; opacity: 1; }
+.submit-item .submit-pick {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.submit-reason { color: var(--fg-dim); text-align: right; }
+

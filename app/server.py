@@ -21,6 +21,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import board as board_mod  # noqa: E402
+import jobs as jobs_mod  # noqa: E402
 from label_io import Box, LabelStore  # noqa: E402
 from predictions import (  # noqa: E402
     MAX_BOXES,
@@ -33,8 +35,11 @@ from predictions import (  # noqa: E402
 from review_store import REASON_CODES, ReviewStore  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 CLOUD_MARKERS = ("/CloudStorage/", "/content/drive", "/My Drive/")
+UPLOAD_DIR = REPO_ROOT / ".staging" / "uploads"
+MAX_UPLOAD_BYTES = 8 * 1024 ** 3
 
 
 def parse_range(header: str | None, size: int) -> tuple[int, int, bool] | None:
@@ -246,6 +251,21 @@ class AppState:
         self._samples_cache = rows
         return rows
 
+    def good_without_labels(self) -> list[str]:
+        """Frames marked good that have no boxes on disk.
+
+        A frame cannot be both "correct" and unlabelled: the review state says a
+        human approved boxes that were never written. This happens when a review
+        decision lands before the label autosave (and it did, for 383 frames
+        before the save order was fixed), so the app surfaces and repairs it
+        rather than silently paying for work that is not in the dataset.
+        """
+        return [
+            r["image_id"]
+            for r in self.samples()
+            if r.get("status") == "good" and not r.get("has_labels")
+        ]
+
     def invalidate(self) -> None:
         self._samples_cache = None
 
@@ -436,7 +456,119 @@ def is_cloud_path(path: Path) -> bool:
     return any(marker in text for marker in CLOUD_MARKERS)
 
 
+class DatasetRegistry:
+    """Lazily-built AppState per dataset, so one server serves the board.
+
+    The landing screen switches datasets without restarting the process, so
+    states are created on first use and then reused. Building a state scans the
+    dataset, so doing that eagerly for every dataset on startup would make the
+    server slow to come up for no benefit.
+    """
+
+    def __init__(
+        self,
+        repo_root: Path,
+        explicit: Path | None = None,
+        *,
+        predictions: Path | None = None,
+        videos: list[Path] | None = None,
+        nms_iou: float = NMS_IOU,
+        max_boxes: int = MAX_BOXES,
+    ):
+        self.repo_root = Path(repo_root).resolve()
+        self.lock = threading.RLock()
+        self._states: dict[str, AppState] = {}
+        self._paths: dict[str, Path] = {}
+        self.default_name = ""
+        # CLI options only make sense for the dataset they were given with, so
+        # they are applied to the explicit dataset and not to every state.
+        self.explicit_name = explicit.name if explicit is not None else ""
+        self.predictions = predictions
+        self.videos = videos or []
+        self.nms_iou = nms_iou
+        self.max_boxes = max_boxes
+
+        # An explicit --dataset may live outside data/datasets (a staging dir or
+        # a Drive copy), so it is registered by name as well as discovered.
+        for entry in board_mod.discover(self.repo_root):
+            self._paths[entry["name"]] = entry["path"]
+        if explicit is not None:
+            root = Path(explicit).expanduser().resolve()
+            self._paths[root.name] = root
+            self.default_name = root.name
+        elif self._paths:
+            # Prefer a dataset that actually has frames: ssbu_players ships
+            # labels but its images live in a release, so defaulting to it would
+            # open an empty review queue.
+            def usable(name: str) -> bool:
+                images = self._paths[name] / "images"
+                return images.is_dir() and any(
+                    p.is_file() for split in images.glob("*") if split.is_dir()
+                    for p in split.iterdir()
+                )
+
+            self.default_name = next(
+                (name for name in self._paths if usable(name)),
+                next(iter(self._paths)),
+            )
+
+    # ----- discovery -----------------------------------------------------
+    def names(self) -> list[str]:
+        return sorted(self._paths)
+
+    def path_for(self, name: str) -> Path | None:
+        return self._paths.get(name)
+
+    def resolve(self, name: str | None) -> AppState:
+        """State for ``name`` (or the default) - creating it on first use."""
+        key = (name or "").strip() or self.default_name
+        if not key:
+            raise KeyError("no datasets available")
+        with self.lock:
+            if key in self._states:
+                return self._states[key]
+            # A dataset created by the Add-dataset job is not in the map yet.
+            if key not in self._paths:
+                for entry in board_mod.discover(self.repo_root):
+                    self._paths[entry["name"]] = entry["path"]
+            root = self._paths.get(key)
+            if root is None:
+                raise KeyError(f"unknown dataset: {key}")
+            is_explicit = key == self.explicit_name
+            state = AppState(
+                root,
+                find_predictions(root, self.predictions if is_explicit else None),
+                nms_iou=self.nms_iou,
+                max_boxes=self.max_boxes,
+                videos=self.videos if is_explicit else None,
+            )
+            self._states[key] = state
+            self._paths[key] = root
+            if not self.default_name:
+                self.default_name = key
+            return state
+
+    def invalidate(self, name: str | None = None) -> None:
+        """Drop cached states so the next request rescans the dataset."""
+        with self.lock:
+            if name:
+                state = self._states.pop(name, None)
+                if state is not None:
+                    state.invalidate()
+            else:
+                for state in self._states.values():
+                    state.invalidate()
+
+    def add(self, name: str, path: Path) -> None:
+        with self.lock:
+            self._paths[name] = Path(path)
+            self._states.pop(name, None)
+
+
 class Handler(SimpleHTTPRequestHandler):
+    registry: DatasetRegistry = None  # type: ignore[assignment]
+    board: board_mod.Board = None  # type: ignore[assignment]
+    runner: jobs_mod.JobRunner = None  # type: ignore[assignment]
     state: AppState = None  # type: ignore[assignment]
     server_version = "LabelReview/1.0"
 
@@ -520,6 +652,19 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ----- routing -------------------------------------------------------
 
+    def _bind_state(self, query: dict) -> None:
+        """Point this request at the dataset named in ``?dataset=``.
+
+        Each handler instance serves exactly one request, so assigning the
+        instance attribute is enough to scope every existing endpoint without
+        threading a state parameter through all of them. Without a name the
+        default dataset is used, which keeps older links and CLI usage working.
+        """
+        name = (query.get("dataset") or [""])[0].strip()
+        if not name:
+            return
+        self.state = self.registry.resolve(name)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         # Percent-decode the path before routing. Image ids are derived from
@@ -531,7 +676,10 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path.startswith("/api/"):
             try:
+                self._bind_state(query)
                 return self.handle_api_get(path, query)
+            except KeyError as exc:
+                return self.send_error_json(str(exc).strip("'\""), 404)
             except ValueError as exc:
                 return self.send_error_json(str(exc), 400)
             except Exception as exc:  # noqa: BLE001
@@ -545,7 +693,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not path.startswith("/api/"):
             return self.send_error_json("not found", 404)
         try:
+            self._bind_state(parse_qs(parsed.query))
             return self.handle_api_put(path)
+        except KeyError as exc:
+            return self.send_error_json(str(exc).strip("'\""), 404)
         except ValueError as exc:
             return self.send_error_json(str(exc), 400)
         except Exception as exc:  # noqa: BLE001
@@ -556,8 +707,16 @@ class Handler(SimpleHTTPRequestHandler):
         path = unquote(parsed.path)
         if not path.startswith("/api/"):
             return self.send_error_json("not found", 404)
+        query = parse_qs(parsed.query)
         try:
-            return self.handle_api_post(path)
+            # Uploads carry a raw body, not JSON, so they are handled before the
+            # JSON-reading dispatch below.
+            if path == "/api/board/upload":
+                return self.handle_upload(query)
+            self._bind_state(query)
+            return self.handle_api_post(path, query)
+        except KeyError as exc:
+            return self.send_error_json(str(exc).strip("'\""), 404)
         except ValueError as exc:
             return self.send_error_json(str(exc), 400)
         except Exception as exc:  # noqa: BLE001
@@ -566,7 +725,23 @@ class Handler(SimpleHTTPRequestHandler):
     # ----- static --------------------------------------------------------
 
     def serve_static(self, path: str) -> None:
-        rel = "index.html" if path in ("/", "") else path.lstrip("/")
+        # `/` is the landing screen; the review UI lives at `/review`. Keeping
+        # them as separate documents means the review app's DOM is never built
+        # on the landing screen, so its keyboard handlers and canvas do not run.
+        routes = {
+            "": "landing.html",
+            "index.html": "landing.html",
+            # Label mode (bounty-scoped, writable) and view mode (read-only
+            # browsing of every frame plus the source video) are the same
+            # document; `?mode=` decides which one the JS boots into.
+            "review": "index.html",
+            "review/": "index.html",
+            "view": "index.html",
+            "view/": "index.html",
+        }
+        rel = routes.get(path.lstrip("/"), path.lstrip("/"))
+        if not rel:
+            rel = "landing.html"
         target = (STATIC_DIR / rel).resolve()
         if STATIC_DIR not in target.parents and target != STATIC_DIR:
             return self.send_error_json("forbidden", 403)
@@ -579,6 +754,26 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_api_get(self, path: str, query: dict) -> None:
         state = self.state
+
+        # ----- board: not dataset-scoped -----
+        if path == "/api/board":
+            payload = self.board.snapshot()
+            payload["active_job"] = self.runner.active()
+            payload["repo"] = str(REPO_ROOT)
+            payload["default_dataset"] = self.registry.default_name
+            return self.send_json(payload)
+
+        if path == "/api/jobs":
+            return self.send_json({
+                "jobs": self.runner.recent(),
+                "active": self.runner.active(),
+            })
+
+        if path.startswith("/api/jobs/"):
+            job = self.runner.get(path[len("/api/jobs/"):])
+            if job is None:
+                return self.send_error_json("unknown job", 404)
+            return self.send_json(job.as_dict())
 
         if path == "/api/dataset":
             samples = state.samples()
@@ -600,11 +795,29 @@ class Handler(SimpleHTTPRequestHandler):
                     "review": counts,
                     "predictions": state.prediction_stats(),
                     "reason_codes": REASON_CODES,
+                    # Surfaced so the board can offer a one-click repair instead
+                    # of leaving unlabelled "good" frames undetected.
+                    "integrity": {
+                        "good_without_labels": len(state.good_without_labels()),
+                    },
                 }
             )
 
         if path == "/api/samples":
             samples = state.samples()
+            # Opening a bounty from the landing screen scopes the queue to that
+            # bounty's frame slice. Without this the progress bar would count the
+            # whole dataset, so "0 of 1654" would sit under a 250-frame bounty.
+            bounty_id = (query.get("bounty") or [""])[0].strip()
+            if bounty_id:
+                bounty = next(
+                    (b for b in self.board.bounties() if b["id"] == bounty_id), None
+                )
+                if bounty is None:
+                    return self.send_error_json(f"unknown bounty: {bounty_id}", 404)
+                if bounty.get("slice"):
+                    allowed = set(bounty["slice"])
+                    samples = [r for r in samples if r["image_id"] in allowed]
             split = (query.get("split") or ["all"])[0]
             status = (query.get("status") or ["all"])[0]
             search = (query.get("q") or [""])[0].strip().lower()
@@ -781,7 +994,73 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    # ----- api: PUT / POST ----------------------------------------------
+    # ----- board: upload ------------------------------------------------
+
+    def handle_upload(self, query: dict) -> None:
+        """Receive an MP4 as a raw body and start an ingest job.
+
+        Raw body rather than multipart on purpose: parsing multipart with the
+        stdlib is fiddly and error-prone around very large files, while a
+        streamed body needs nothing but Content-Length. The filename arrives in
+        a header because the body *is* the file.
+
+        The bytes are written to disk before the job starts, so a job never
+        sees a half-written video and a failed upload never creates a job.
+        """
+        raw_name = (query.get("name") or [""])[0].strip()
+        header_name = self.headers.get("X-Filename") or ""
+        stem = raw_name or Path(unquote(header_name)).stem
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return self.send_error_json("empty upload", 400)
+        if length > MAX_UPLOAD_BYTES:
+            return self.send_error_json("file is too large for one upload", 413)
+        if not stem:
+            return self.send_error_json("missing dataset name", 400)
+
+        name = jobs_mod.slugify(stem)
+        publish = (query.get("publish") or ["0"])[0] in ("1", "true", "yes")
+        try:
+            fps = float((query.get("fps") or ["5"])[0])
+        except ValueError:
+            fps = 5.0
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        dest = UPLOAD_DIR / f"{name}.mp4"
+        remaining = length
+        try:
+            with open(dest, "wb") as fh:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    remaining -= len(chunk)
+        except OSError as exc:
+            return self.send_error_json(f"could not save upload: {exc}", 500)
+
+        if remaining:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            return self.send_error_json("upload was truncated", 400)
+
+        try:
+            job = self.runner.start_ingest(
+                video=dest, name=name, fps=fps, publish=publish,
+            )
+        except RuntimeError as exc:
+            return self.send_error_json(str(exc), 409)
+
+        return self.send_json({
+            "ok": True,
+            "job": job.as_dict(),
+            "name": name,
+            "bytes": dest.stat().st_size,
+        })
+
 
     def handle_api_put(self, path: str) -> None:
         state = self.state
@@ -791,6 +1070,8 @@ class Handler(SimpleHTTPRequestHandler):
             payload = self.read_json()
             if state.find(image_id) is None:
                 return self.send_error_json(f"unknown image: {image_id}", 404)
+            if not self.guard_submitted(payload.get("bounty_id")):
+                return
             raw_boxes = payload.get("boxes")
             if not isinstance(raw_boxes, list):
                 return self.send_error_json("body must include a 'boxes' list")
@@ -844,27 +1125,147 @@ class Handler(SimpleHTTPRequestHandler):
 
         return self.send_error_json("unknown endpoint", 404)
 
-    def handle_api_post(self, path: str) -> None:
+    def locked_bounty(self, bounty_id: str) -> dict | None:
+        """Return the bounty if it is already submitted, else ``None``.
+
+        Once a bounty is submitted its labels are the content of a pull request.
+        Continuing to edit them would change work that reviewers have already
+        been asked to approve, and the branch would no longer match what was
+        submitted - so a submitted bounty is frozen. This lives on the server
+        because the landing screen hiding its Edit button is a courtesy, not a
+        guarantee: a bookmarked URL must not be able to write either.
+        """
+        bounty_id = (bounty_id or "").strip()
+        if not bounty_id:
+            return None
+        bounty = next(
+            (b for b in self.board.bounties() if b["id"] == bounty_id), None
+        )
+        if bounty and (bounty.get("pr_url") or bounty.get("submitted_at")):
+            return bounty
+        return None
+
+    def guard_submitted(self, bounty_id: str) -> bool:
+        """True when the caller may write. Sends a 409 and returns False if not."""
+        bounty = self.locked_bounty(bounty_id)
+        if bounty is None:
+            return True
+        url = bounty.get("pr_url") or ""
+        where = f" ({url})" if url else ""
+        self.send_error_json(
+            "This bounty has already been submitted"
+            f"{where}, so its labels are locked. "
+            "A correction needs a new bounty and its own PR.",
+            409,
+        )
+        return False
+
+    def handle_api_post(self, path: str, query: dict | None = None) -> None:
         state = self.state
+
+        # ----- board actions: not dataset-scoped -----
+        if path == "/api/board/seed":
+            payload = self.read_json()
+            name = payload.get("dataset") or ""
+            if not name:
+                return self.send_error_json("body must include a 'dataset'")
+            created = self.board.seed(
+                name,
+                target=int(payload.get("target") or board_mod.DEFAULT_TARGET),
+                cap=int(payload.get("cap") or board_mod.MAX_BOUNTIES),
+                force=bool(payload.get("force")),
+            )
+            return self.send_json({"ok": True, "created": len(created),
+                                   "bounties": [b["id"] for b in created]})
+
+        if path == "/api/board/sync":
+            return self.send_json({"ok": True, **self.board.sync()})
+
+        if path == "/api/board/submit":
+            payload = self.read_json()
+            ids = [str(i) for i in (payload.get("bounty_ids") or []) if str(i).strip()]
+            if not ids:
+                return self.send_error_json("body must include 'bounty_ids'")
+            return self.send_json(self.board.submit(ids))
+
+        if path.startswith("/api/board/bounty/") and path.endswith("/claim"):
+            bounty_id = unquote(path[len("/api/board/bounty/"):-len("/claim")])
+            payload = self.read_json()
+            bounty = self.board.claim(bounty_id, by=payload.get("by") or "")
+            # Claiming means "claim it on GitHub too" whenever GitHub is
+            # connected. A caller can opt out, but the default has to publish or
+            # the local claim is invisible to everyone else on the board.
+            post = payload.get("post_to_github")
+            if post is None:
+                post = self.board.gh_connected()
+            posted = {"ok": True, "posted": False, "reason": ""}
+            if post:
+                posted = self.board.post_claim(bounty_id)
+                if posted.get("posted"):
+                    # Re-read so the response reflects the cleared pending flag
+                    # rather than the pre-publish copy returned by claim().
+                    bounty = next(
+                        (b for b in self.board.bounties() if b["id"] == bounty_id),
+                        bounty,
+                    )
+            return self.send_json({"ok": True, "bounty": bounty, "github": posted})
+
+        if path.startswith("/api/board/bounty/") and path.endswith("/unclaim"):
+            bounty_id = unquote(path[len("/api/board/bounty/"):-len("/unclaim")])
+            return self.send_json({"ok": True, "bounty": self.board.unclaim(bounty_id)})
+
+        if path.startswith("/api/jobs/") and path.endswith("/cancel"):
+            job_id = path[len("/api/jobs/"):-len("/cancel")]
+            return self.send_json({"ok": self.runner.cancel(job_id)})
 
         if path.startswith("/api/sample/") and path.endswith("/review"):
             image_id = path[len("/api/sample/") : -len("/review")]
             payload = self.read_json()
-            if state.find(image_id) is None:
+            row = state.find(image_id)
+            if row is None:
                 return self.send_error_json(f"unknown image: {image_id}", 404)
+            if not self.guard_submitted(payload.get("bounty_id")):
+                return
+
+            status = payload.get("status", "unreviewed")
+            # "Good" means "the boxes on this frame are correct", so it is a
+            # contradiction to approve a frame that has none. The client saves
+            # labels before it posts a review, but enforcing it here means a
+            # dropped autosave, a closed tab, or a stale second tab cannot
+            # produce a reviewed frame that no bounty can ever be paid for.
+            if status == "good" and not row.get("has_labels"):
+                return self.send_error_json(
+                    "This frame has no boxes, so it cannot be marked good. "
+                    "Draw or adopt a box if a player is visible, or mark it "
+                    "Empty (n) if it is not gameplay.",
+                    409,
+                )
+
             record = state.reviews.set_status(
                 image_id,
-                payload.get("status", "unreviewed"),
+                status,
                 reasons=payload.get("reasons"),
                 note=payload.get("note", ""),
             )
             state.invalidate()
             return self.send_json({"ok": True, "review": record})
 
+        if path == "/api/integrity/repair":
+            # Puts unlabelled "good" frames back in the queue so the contributor
+            # re-reviews them with the fixed save order. Returning them to
+            # unreviewed rather than guessing boxes is the only honest repair.
+            ids = state.good_without_labels()
+            cleared = state.reviews.reset_many(ids)
+            state.invalidate()
+            return self.send_json({"ok": True, "reset": cleared, "ids": ids})
+
         if path.startswith("/api/undo/"):
             image_id = path[len("/api/undo/") :]
+            payload = self.read_json()
             if state.find(image_id) is None:
                 return self.send_error_json(f"unknown image: {image_id}", 404)
+            if not self.guard_submitted(payload.get("bounty_id")):
+                return
             result = state.labels.restore_from_journal(image_id)
             state.invalidate()
             return self.send_json({"ok": True, **result})
@@ -910,7 +1311,15 @@ def make_thumb(path: Path, width: int = 160) -> bytes | None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Local YOLO label review app.")
-    p.add_argument("--dataset", required=True, help="Path to a YOLO dataset root.")
+    p.add_argument(
+        "--dataset",
+        default=None,
+        help=(
+            "Dataset to open by default. Optional: the landing screen lists every "
+            "dataset under data/datasets/ and .staging/ingested/, and /review "
+            "selects one with ?dataset=<name>."
+        ),
+    )
     p.add_argument("--port", type=int, default=8770)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument(
@@ -977,36 +1386,67 @@ def find_predictions(root: Path, explicit: Path | None) -> Path | None:
 
 def main() -> int:
     args = parse_args()
-    root = Path(args.dataset).expanduser().resolve()
+    root = Path(args.dataset).expanduser().resolve() if args.dataset else None
 
-    if not root.exists():
-        print(f"ERROR: dataset not found: {root}")
-        return 2
-    if not (root / "labels").exists() and not (root / "images").exists():
-        print(f"ERROR: {root} does not look like a YOLO dataset (no images/ or labels/)")
-        return 2
+    if root is not None:
+        if not root.exists():
+            print(f"ERROR: dataset not found: {root}")
+            return 2
+        if not (root / "labels").exists() and not (root / "images").exists():
+            print(f"ERROR: {root} does not look like a YOLO dataset (no images/ or labels/)")
+            return 2
 
-    if is_cloud_path(root) and not args.allow_cloud:
-        print("Refusing to edit a cloud-synced dataset directly.")
-        print(f"  dataset: {root}")
-        print()
-        print("Editing inside Google Drive can create sync conflicts and is slow.")
-        print("Stage it locally first:")
-        print("    python scripts/stage_dataset.py")
-        print(f"    python app/server.py --dataset <staged_dir>")
-        print()
-        print("To override anyway, pass --allow-cloud")
-        return 3
+        if is_cloud_path(root) and not args.allow_cloud:
+            print("Refusing to edit a cloud-synced dataset directly.")
+            print(f"  dataset: {root}")
+            print()
+            print("Editing inside Google Drive can create sync conflicts and is slow.")
+            print("Stage it locally first:")
+            print("    python scripts/stage_dataset.py")
+            print(f"    python app/server.py --dataset <staged_dir>")
+            print()
+            print("To override anyway, pass --allow-cloud")
+            return 3
+    else:
+        if not board_mod.discover(REPO_ROOT):
+            print("ERROR: no datasets found under data/datasets/ or .staging/ingested/.")
+            print("       Add one from the landing screen, or run:")
+            print("         python scripts/ingest_video.py <video>.mp4")
+            return 2
 
-    Handler.state = AppState(
-        root,
-        find_predictions(root, args.predictions),
+    registry = DatasetRegistry(
+        REPO_ROOT,
+        explicit=root,
+        predictions=args.predictions,
+        videos=[Path(p) for p in (args.video or [])],
         nms_iou=args.nms_iou,
         max_boxes=args.max_boxes,
-        videos=[Path(p) for p in (args.video or [])],
     )
+    # The default state keeps the CLI's original behaviour: --dataset (or the
+    # first published dataset) is what /api/* answers when no ?dataset= is given.
+    Handler.registry = registry
+    Handler.state = registry.resolve(None)
+
+    board = board_mod.Board(REPO_ROOT)
+    runner = jobs_mod.JobRunner(
+        REPO_ROOT, board,
+        on_dataset_ready=lambda name: (
+            registry.add(name, REPO_ROOT / "data" / "datasets" / name),
+            registry.invalidate(name),
+        ),
+    )
+    Handler.board = board
+    Handler.runner = runner
+
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Label review app serving {root}")
+    print(f"Label review app serving {len(registry.names())} dataset(s)")
+    for entry in board.datasets():
+        mark = "*" if entry["name"] == registry.default_name else " "
+        fresh = "no images yet" if not entry["images"] else (
+            f"{entry['reviewed']}/{entry['images']} reviewed"
+        )
+        print(f" {mark} {entry['name']:<28} {entry['kind']:<9} {fresh}")
+
     if Handler.state.videos:
         print(f"Video mode: {len(Handler.state.videos)} source video(s)")
         for v in Handler.state.videos:

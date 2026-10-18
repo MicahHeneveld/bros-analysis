@@ -108,6 +108,21 @@ class ReviewStore:
         self._flush()
         return {"image_id": image_id, **record}
 
+    def reset_many(self, image_ids: list[str]) -> int:
+        """Return frames to `unreviewed` in a single atomic write.
+
+        Used to repair frames that were marked good before their labels were
+        saved: reverting them puts them back in the queue instead of leaving a
+        "reviewed" frame that no bounty can ever be paid for.
+        """
+        cleared = 0
+        for image_id in image_ids:
+            if self._state.pop(image_id, None) is not None:
+                cleared += 1
+        if cleared:
+            self._flush()
+        return cleared
+
     def counts(self, total: int | None = None) -> dict:
         """Status tallies.
 

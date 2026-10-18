@@ -30,4 +30,4 @@ EXPOSE 8770
 # 0.0.0.0 rather than the default 127.0.0.1, or nothing outside the container
 # could reach it.
 ENTRYPOINT ["python", "app/server.py", "--host", "0.0.0.0"]
-CMD ["--dataset", "/data", "--port", "8770"]
+CMD ["--port", "8770"]

@@ -19,13 +19,13 @@ inflated later. Difficulty is the model's own uncertainty on that slice: frames
 the model is unsure about are the frames worth a human's attention.
 
 Usage:
-    python scripts/bounty.py doctor
-    python scripts/bounty.py create --dataset data/datasets/ssbu_players --target 250
-    python scripts/bounty.py list
-    python scripts/bounty.py claim 12
-    python scripts/bounty.py start 12
-    python scripts/bounty.py submit
-    python scripts/bounty.py leaderboard
+    python3 scripts/bounty.py doctor
+    python3 scripts/bounty.py create --dataset data/datasets/ssbu_players --target 250
+    python3 scripts/bounty.py list
+    python3 scripts/bounty.py claim 12
+    python3 scripts/bounty.py start 12
+    python3 scripts/bounty.py submit
+    python3 scripts/bounty.py leaderboard
 """
 from __future__ import annotations
 
@@ -326,7 +326,7 @@ def cmd_models(args: argparse.Namespace) -> int:
 
     if not published and not local:
         print("No model checkpoints published and none downloaded.")
-        print("Publish one with:  python scripts/bounty.py publish-models --run-name <run>")
+        print("Publish one with:  python3 scripts/bounty.py publish-models --run-name <run>")
         return 1
 
     print(f"{'run':<32} {'size':>8}  status")
@@ -357,7 +357,7 @@ def download_model(run_name: str = "", force: bool = False) -> bool:
     published = release_assets("models-")
     if not published:
         print("  No 'models-*' release exists yet.")
-        print("  Publish one with:  python scripts/bounty.py publish-models --run-name <run>")
+        print("  Publish one with:  python3 scripts/bounty.py publish-models --run-name <run>")
         return False
 
     if run_name:
@@ -433,7 +433,7 @@ def cmd_publish_models(args: argparse.Namespace) -> int:
 
     notes = args.notes or (
         f"Player detector checkpoint `{run_name}`.\n\n"
-        "```bash\npython scripts/bounty.py fetch --models\n```\n\n"
+        "```bash\npython3 scripts/bounty.py fetch --models\n```\n\n"
         "Installs it as `models/%s.pt`, where `ingest_video.py` and "
         "`predict_ssbu.py` will find it automatically." % run_name
     )
@@ -552,7 +552,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok = False
             size_mb = asset["size"] / (1024 * 1024)
             print(f"  [MISS] {name}: no images ({size_mb:.0f} MB release available)")
-            print(f"         -> python scripts/bounty.py fetch --dataset data/datasets/{name}")
+            print(f"         -> python3 scripts/bounty.py fetch --dataset data/datasets/{name}")
         else:
             # Nothing the contributor can do, and it may be a dataset they will
             # never touch. Reporting MISS would block "Ready" forever.
@@ -560,9 +560,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     print()
     if ok:
-        print("Ready. Claim a bounty with:  python scripts/bounty.py list")
+        print("Ready. Claim a bounty with:  python3 scripts/bounty.py list")
     else:
-        print("Fix the MISS lines above, then re-run  python scripts/bounty.py doctor")
+        print("Fix the MISS lines above, then re-run  python3 scripts/bounty.py doctor")
     return 0 if ok else 1
 
 
@@ -641,7 +641,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         "collaborators, because they attract scam replies). Ask the maintainer to add",
         "you, then comment `claim` and run:",
         "",
-        f"    python scripts/bounty.py start {args.issue_hint or '<number>'}",
+        f"    python3 scripts/bounty.py start {args.issue_hint or '<number>'}",
         "",
         "**What to do**",
         "",
@@ -680,9 +680,11 @@ def cmd_create(args: argparse.Namespace) -> int:
     print(f"Opened bounty: {out}")
 
     # Public repos get scraped within minutes, and the bounty text is bait:
-    # scam comments quoted the point values back as USDC. Locking leaves
-    # commenting to repo collaborators, which is who is allowed to claim.
-    if not args.no_lock:
+    # scam comments quoted the point values back as USDC. Locking is no longer
+    # the answer though - it would force every labeler to have write access just
+    # to claim - so issues stay open and claim-guard.yml filters junk claims.
+    # `--lock` remains for a bounty that is actively being brigaded.
+    if args.lock:
         number = out.rstrip("/").rsplit("/", 1)[-1]
         try:
             gh("issue", "lock", number, "--reason", "spam")
@@ -698,7 +700,7 @@ def cmd_list(args: argparse.Namespace) -> int:
              "--json", "number,title,body,labels,assignees,comments", "--limit", "100")
     issues = json.loads(raw or "[]")
     if not issues:
-        print("No open bounties. Create some with:  python scripts/bounty.py create --dataset ...")
+        print("No open bounties. Create some with:  python3 scripts/bounty.py create --dataset ...")
         return 0
 
     print(f"{'#':>5}  {'points':>6}  {'claims':>6}  title")
@@ -746,15 +748,13 @@ def cmd_claim(args: argparse.Namespace) -> int:
     else:
         try:
             gh("issue", "comment", str(args.issue), "--body", f"claim by @{me}")
-        except subprocess.CalledProcessError:
-            # Bounty issues are locked to collaborators. A stranger gets a raw
-            # gh error, which reads like the tool is broken rather than like a
-            # permission they can ask for.
+        except subprocess.CalledProcessError as exc:
+            # Issues are unlocked now, so this is auth or connectivity rather
+            # than a permission the contributor could ask for.
             fail(
-                f"could not comment on #{args.issue} — bounty issues are locked to "
-                "repo collaborators.\n"
-                "Ask the maintainer to add you to the repo (write access), then "
-                "re-run this command. The claim itself is just a comment."
+                f"could not comment on #{args.issue}.\n"
+                f"{(exc.stderr or '').strip() or 'gh returned an error'}\n"
+                "Check `gh auth status`. No repository role is needed to claim."
             )
         print(f"Claimed #{args.issue}.")
 
@@ -776,25 +776,55 @@ def cmd_claim(args: argparse.Namespace) -> int:
             run(["git", "checkout", "-b", branch])
         print(f"On branch {branch}.")
 
-    print(f"\nNext:  python scripts/bounty.py start {args.issue}")
+    print(f"\nNext:  python3 scripts/bounty.py start {args.issue}")
     return 0
 
 
 # --------------------------------------------------------------------- start
+def _local_bounty_id(dataset_dir: Path, issue: dict, meta: dict) -> str:
+    """The board id for an issue, so `start` opens the bounty already selected.
+
+    The landing screen and the review queue key on the local board, whose ids are
+    ``<dataset>#<index>``. Issues carry the matching index in their ``[n/N]``
+    title suffix. Returns "" when the board has no such bounty yet.
+    """
+    match = re.search(r"\[(\d+)/\d+\]\s*$", str(issue.get("title") or ""))
+    if not match:
+        return ""
+    name = dataset_dir.name
+    candidate = f"{name}#{int(match.group(1))}"
+    try:
+        sys.path.insert(0, str(ROOT / "app"))
+        try:
+            from board import Board
+        finally:
+            sys.path.pop(0)
+        known = {b["id"] for b in Board(ROOT).bounties()}
+    except Exception:  # noqa: BLE001 - a missing board just means no deep link
+        return ""
+    return candidate if candidate in known else ""
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     issue, meta = load_bounty(args.issue)
     dataset = (ROOT / args.dataset if args.dataset else ROOT / "data/datasets" / meta["dataset"]).resolve()
     if not dataset.exists():
-        fail(f"dataset not found: {dataset}\nRun  python scripts/bounty.py doctor")
+        fail(f"dataset not found: {dataset}\nRun  python3 scripts/bounty.py doctor")
 
-    url = f"http://127.0.0.1:{args.port}/?mode=images&bounty={quote(issue['title'])}"
-    filt = meta.get("filter") or {}
-    if filt.get("kind"):
-        url += "&kind=" + quote(filt["kind"])
-    if filt.get("flag"):
-        url += "&flag=" + quote(filt["flag"])
-    if meta.get("split"):
-        url += "&split=" + quote(meta["split"])
+    # The review screen selects a dataset with ?dataset= and a frame slice with
+    # ?bounty_id=. The old single-screen app read ?mode= and ?bounty=<title>,
+    # which the current pages ignore, so `start` used to open the landing screen
+    # with the bounty silently dropped.
+    params = {"dataset": dataset.name}
+    bounty_id = _local_bounty_id(dataset, issue, meta)
+    if bounty_id:
+        params["bounty_id"] = bounty_id
+        params["bounty"] = issue["title"]
+        if meta.get("target"):
+            params["of"] = str(meta["target"])
+    url = f"http://127.0.0.1:{args.port}/review?" + "&".join(
+        f"{k}={quote(v)}" for k, v in params.items()
+    )
 
     if args.no_serve:
         print(url)
@@ -827,49 +857,367 @@ def quote(s: str) -> str:
 
 
 # -------------------------------------------------------------------- submit
+PROTECTED_BRANCHES = ("main", "master")
+
+
+def is_protected(branch: str) -> bool:
+    return branch in PROTECTED_BRANCHES
+
+
+def local_bounty(bounty_id: str) -> dict | None:
+    """The board's copy of a bounty: its slice, dataset and linked issue."""
+    try:
+        sys.path.insert(0, str(ROOT / "app"))
+        try:
+            from board import Board
+        finally:
+            sys.path.pop(0)
+        for bounty in Board(ROOT).bounties():
+            if bounty.get("id") == bounty_id:
+                return bounty
+    except Exception:  # noqa: BLE001 - a missing board just means no local copy
+        return None
+    return None
+
+
+def changed_label_paths(dataset: str, stems: set[str]) -> list[str]:
+    """Label files this bounty actually touched, from the working tree.
+
+    Scoped staging is what makes one-bounty-one-PR true when several bounties
+    are in flight: a broad `git add data/datasets` would sweep another
+    contributor's half-finished labels into this PR.
+    """
+    res = run(["git", "status", "--porcelain", "--untracked-files=all", "--", "data/datasets"],
+              check=False, capture=True)
+    marker = f"/{dataset}/labels/"
+    paths: list[str] = []
+    for line in (res.stdout or "").splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        if " -> " in path:  # a rename reports both sides
+            path = path.split(" -> ", 1)[1]
+        path = path.strip('"')
+        if marker not in path or not path.endswith(".txt"):
+            continue
+        if stems and Path(path).stem not in stems:
+            continue
+        paths.append(path)
+    return paths
+
+
+def prepare_branch(number: int, base: str) -> str:
+    """Check out `bounty/N`, creating it from the base branch when missing.
+
+    New branches start at `origin/<base>` rather than HEAD: submitting two
+    bounties in a row would otherwise stack the second PR on top of the first,
+    and each PR is supposed to contain exactly one bounty.
+    """
+    target = f"bounty/{number}"
+    current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).stdout.strip()
+    if current == target:
+        return target
+    if is_protected(current):
+        return adopt_branch(number, current, base)
+
+    if run(["git", "rev-parse", "--verify", "--quiet", target],
+           check=False, capture=True).returncode == 0:
+        run(["git", "switch", target])
+        print(f"Switched to the existing {target}.")
+        return target
+
+    start = f"origin/{base}"
+    if run(["git", "rev-parse", "--verify", "--quiet", start],
+           check=False, capture=True).returncode != 0:
+        start = base
+    run(["git", "switch", "-c", target, start])
+    print(f"Created {target} from {start}.")
+    return target
+
+
+def resolve_submit_issue(
+    explicit: int | None, branch: str, claimed: list[int]
+) -> tuple[int | None, str]:
+    """Pick the issue a submit belongs to, and say why when it cannot.
+
+    The branch name wins because that is what `claim` created. Claims made from
+    the landing screen are the fallback: the browser can post a GitHub comment,
+    but it cannot run `git checkout`, so those contributors arrive on `main`
+    with no `bounty/N` branch to read the number from.
+    """
+    if explicit:
+        return int(explicit), ""
+    match = re.search(r"bounty/(\d+)", branch)
+    if match:
+        return int(match.group(1)), ""
+    unique = sorted(set(claimed))
+    if len(unique) == 1:
+        return unique[0], ""
+    if unique:
+        listed = ", ".join(f"#{n}" for n in unique)
+        return None, f"several bounties are claimed ({listed}) — pass --issue N"
+    return None, "cannot tell which issue this branch belongs to; pass --issue N"
+
+
+def claimed_issues() -> list[int]:
+    """Issue numbers for in-progress claims, narrowed to the signed-in user.
+
+    Reads the local board rather than GitHub: this runs before the network call,
+    and the board already caches who claimed what.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "app"))
+        try:
+            from board import Board
+        finally:
+            sys.path.pop(0)
+        snap = Board(ROOT).snapshot()
+    except Exception:  # noqa: BLE001 - a missing board just means no fallback
+        return []
+    me = str((snap.get("github") or {}).get("user") or "").lower()
+    issues: list[int] = []
+    for bounty in snap.get("bounties") or []:
+        if not bounty.get("claimed_by") or bounty.get("status") == "done":
+            continue
+        if me and str(bounty.get("claimed_by") or "").lower() != me:
+            continue
+        number = int(bounty.get("github_issue") or 0)
+        if number:
+            issues.append(number)
+    return sorted(set(issues))
+
+
+def _label_only_ahead(branch: str, base: str) -> int | None:
+    """How many commits `branch` has over `origin/<base>`, if all touch labels.
+
+    Returns None when the commits are not purely label data (so they must not be
+    moved without the author looking) or when the remote ref is missing.
+    """
+    ahead = run(["git", "rev-list", "--count", f"origin/{base}..{branch}"],
+                check=False, capture=True)
+    if ahead.returncode != 0:
+        return None
+    count = int(ahead.stdout.strip() or 0)
+    if not count:
+        return 0
+    paths = run(["git", "log", "--name-only", "--pretty=format:",
+                 f"origin/{base}..{branch}"], check=False, capture=True).stdout.split()
+    if any(not path.startswith("data/datasets/") for path in paths):
+        return None
+    return count
+
+
+def adopt_branch(number: int, branch: str, base: str) -> str:
+    """Put a protected-branch submit on `bounty/N` before anything is committed.
+
+    Branching first is the whole trick: uncommitted edits follow the working
+    tree, so the common case never touches the protected branch at all. The one
+    case that needs care is an earlier `submit` without `--push`, which already
+    committed on `main` — those commits are label-only by construction, so they
+    can be carried onto the new branch and `main` pointed back at its remote.
+    """
+    target = f"bounty/{number}"
+    try:
+        return _adopt_branch(number, branch, base, target)
+    except subprocess.CalledProcessError as exc:
+        fail(f"could not move this work onto {target}: {exc}\n"
+             f"Nothing was committed. Resolve the git state, then submit again.")
+
+
+def _adopt_branch(number: int, branch: str, base: str, target: str) -> str:
+    old_head = run(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
+    dirty = bool(run(["git", "status", "--porcelain"], capture=True).stdout.strip())
+    ahead = _label_only_ahead(branch, base)
+    exists = run(["git", "rev-parse", "--verify", "--quiet", target],
+                 check=False, capture=True).returncode == 0
+
+    if exists:
+        run(["git", "checkout", target])
+        print(f"Switched to the existing {target}.")
+    elif dirty:
+        run(["git", "checkout", "-b", target])
+        print(f"Created {target} from {branch}; your uncommitted edits came with it.")
+    elif ahead == 0:
+        run(["git", "checkout", "-b", target])
+        print(f"Created {target} from {branch}.")
+    elif ahead:
+        run(["git", "branch", target])
+        run(["git", "switch", target])
+        print(f"Created {target} from {branch}.")
+    else:
+        fail(f"{branch} has commits that are not label data, so they were left alone.\n"
+             f"Move them yourself, then submit again:\n"
+             f"  git switch -c {target}")
+
+    # Only rewind the protected branch when the commits we left behind are
+    # already reachable from the branch we just moved to. `--force` on a branch
+    # that is not checked out only moves a pointer; the work is safe above.
+    if ahead:
+        safe = run(["git", "merge-base", "--is-ancestor", old_head, target],
+                   check=False).returncode == 0
+        if safe:
+            run(["git", "branch", "-f", branch, f"origin/{base}"])
+            print(f"Moved {ahead} label commit(s) off {branch}; "
+                  f"{branch} is back at origin/{base}.")
+        else:
+            print(f"note: {branch} still points at your label commit(s); "
+                  f"they are not all on {target}, so it was left untouched.")
+    elif ahead is None:
+        print(f"note: left the commits already on {branch} alone — "
+              f"they are not all label data.")
+    return target
+
+
+def _ahead_count(branch: str, base: str) -> int:
+    res = run(["git", "rev-list", "--count", f"origin/{base}..{branch}"],
+              check=False, capture=True)
+    return int(res.stdout.strip() or 0) if res.returncode == 0 else 0
+
+
+def repo_slug() -> str:
+    try:
+        return gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def gh_can_push() -> bool:
+    """Whether this account may push branches to the upstream repo."""
+    slug = repo_slug()
+    if not slug:
+        return True
+    try:
+        return gh("api", f"repos/{slug}", "--jq", ".permissions.push").strip() == "true"
+    except subprocess.CalledProcessError:
+        return True
+
+
+def push_to_fork(branch: str) -> str:
+    """Push a branch to the contributor's own fork.
+
+    Labelers deliberately have no repository role (see .github/CODEOWNERS), so
+    they cannot push to this repo at all. Forking keeps the PR flow identical
+    while granting them nothing.
+    """
+    login = gh("api", "user", "--jq", ".login")
+    name = repo_slug().split("/")[-1] or "bros-analysis"
+    run(["gh", "repo", "fork", "--remote=false"], check=False)  # idempotent
+    fork_slug = f"{login}/{name}"
+    try:
+        url = gh("repo", "view", fork_slug, "--json", "url", "--jq", ".url")
+    except subprocess.CalledProcessError:
+        fail(f"could not create or find your fork ({fork_slug}).\n"
+             "Fork the repo once in the browser, then submit again.")
+    if "fork" in run(["git", "remote"], capture=True).stdout.split():
+        run(["git", "remote", "set-url", "fork", url])
+    else:
+        run(["git", "remote", "add", "fork", url])
+    run(["git", "push", "-u", "fork", branch])
+    print(f"Pushed {branch} to your fork ({fork_slug}) — no write access needed.")
+    return f"{login}:{branch}"
+
+
 def cmd_submit(args: argparse.Namespace) -> int:
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).stdout.strip()
-    if branch in ("main", "master") and not args.force:
-        fail("refusing to submit from main — claim a bounty first, which creates a branch")
+    info = local_bounty(args.bounty) if args.bounty else None
+    if args.bounty and not info:
+        fail(f"no such bounty on the local board: {args.bounty}")
 
-    number = args.issue
+    number, reason = resolve_submit_issue(
+        args.issue or (info or {}).get("github_issue"), branch, claimed_issues())
     if not number:
-        m = re.search(r"bounty/(\d+)", branch)
-        if m:
-            number = int(m.group(1))
-    if not number:
-        fail("cannot tell which issue this branch belongs to; pass --issue N")
+        fail(reason)
+
+    if info:
+        # Scoped submit: refuse to open a PR for work that is not finished,
+        # because a bought-ahead partial PR would claim the bounty's points
+        # while other frames stay unlabelled.
+        progress = info.get("progress") or {}
+        done, total = int(progress.get("done") or 0), int(progress.get("total") or 0)
+        if total and done < total:
+            fail(f"bounty {args.bounty} is not complete yet: {done}/{total} frames.\n"
+                 "Finish the remaining frames, then submit.")
+        branch = prepare_branch(number, args.base)
 
     issue, meta = load_bounty(number)
 
+    # Claims made from the landing screen cannot create a branch, so a
+    # contributor who claimed in the browser legitimately arrives on `main`.
+    # Rather than making them re-claim from the CLI, adopt the branch here —
+    # before anything is staged, so nothing is ever committed to `main`.
+    if is_protected(branch) and not args.force:
+        branch = adopt_branch(number, branch, args.base)
+
     dirty = run(["git", "status", "--porcelain"], capture=True).stdout.strip()
-    if not dirty and not args.force:
-        print("No changes to submit.")
-        return 0
+    n_labels = n_files = 0
+    committed = False
 
-    # Only labels and review state belong in a bounty PR. Images and staged data
-    # are gitignored on purpose, so adding paths broadly is safe but noisy.
-    run(["git", "add", "-A", "data/datasets"])
-    staged = run(["git", "diff", "--cached", "--name-only"], capture=True).stdout.strip()
-    if not staged:
-        print("No label changes staged. Did you actually review anything?")
-        return 1
+    if info:
+        # Scoped submit: only this bounty's slice, so another contributor's
+        # half-finished labels are never swept into this PR.
+        stems = {str(i).rsplit("/", 1)[-1] for i in info.get("slice") or []}
+        paths = changed_label_paths(str(info.get("dataset") or ""), stems)
+        if paths:
+            run(["git", "add", "--", *paths])
+            committed = True
+    elif dirty:
+        # Only labels and review state belong in a bounty PR. Images and staged
+        # data are gitignored on purpose, so adding paths broadly is safe but
+        # noisy.
+        run(["git", "add", "-A", "data/datasets"])
+        committed = True
 
-    n_files = len(staged.splitlines())
-    # Not every staged file is a frame: dataset metadata (data.yaml, manifest,
-    # predictions) rides along on the first bounty. Counting those as "frames"
-    # would overstate the work in the commit message and the PR body.
-    n_labels = sum(1 for p in staged.splitlines()
-                   if "/labels/" in p and p.endswith(".txt"))
+    if committed:
+        staged = run(["git", "diff", "--cached", "--name-only"], capture=True).stdout.strip()
+        if not staged:
+            print("No label changes staged. Did you actually review anything?")
+            return 1
+
+        n_files = len(staged.splitlines())
+        # Not every staged file is a frame: dataset metadata (data.yaml,
+        # manifest, predictions) rides along on the first bounty. Counting those
+        # as "frames" would overstate the work in the commit message and the PR.
+        n_labels = sum(1 for p in staged.splitlines()
+                       if "/labels/" in p and p.endswith(".txt"))
+        run(["git", "commit", "-m",
+             f"labels: bounty #{number} ({n_labels} frames)\n\nCloses #{number}"])
+        print(f"Committed {n_labels} label file(s)"
+              + (f" plus {n_files - n_labels} dataset file(s)" if n_files > n_labels else "")
+              + ".")
+
+    # No new edits is fine only if the branch already holds a commit to ship.
+    # That is the re-run case: the first `submit` committed, `--push` came later.
+    already = _ahead_count(branch, args.base)
+    if not committed:
+        if not already:
+            print("Nothing to submit: no label changes and nothing unpushed.")
+            return 1
+        print(f"No new edits; {branch} is already {already} commit(s) ahead.")
+
     pts = meta.get("points", 0)
-    run(["git", "commit", "-m",
-         f"labels: bounty #{number} ({n_labels} frames)\n\nCloses #{number}"])
-    print(f"Committed {n_labels} label file(s)"
-          + (f" plus {n_files - n_labels} dataset file(s)" if n_files > n_labels else "")
-          + ".")
-
     if args.push:
-        run(["git", "push", "-u", "origin", branch])
+        head = ""
+        pushed = run(["git", "push", "-u", "origin", branch], check=False, capture=True)
+        if pushed.returncode != 0:
+            if gh_can_push():
+                fail("could not push:\n" + (pushed.stderr or "").strip())
+            # No write access is the expected case for a labeler, not an error.
+            head = push_to_fork(branch)
+
+        # Re-running a submit should not fail on "a pull request already
+        # exists for this branch" - the work is already shipped. --head accepts
+        # "owner:branch" for forks, which gh pr view does not.
+        existing = gh("pr", "list", "--head", head or branch,
+                      "--state", "open", "--json", "url", check=False)
+        if existing:
+            try:
+                found = json.loads(existing) or []
+                url = (found[0].get("url") if found else "") or ""
+            except (json.JSONDecodeError, IndexError, AttributeError):
+                url = ""
+            if url:
+                print(f"Opened PR: {url}")
+                return 0
         body = "\n".join([
             f"Closes #{number}",
             "",
@@ -878,11 +1226,14 @@ def cmd_submit(args: argparse.Namespace) -> int:
             "",
             "Generated by `scripts/bounty.py submit`.",
         ])
-        url = gh("pr", "create", "--title", f"labels: bounty #{number}",
-                 "--body", body, "--base", args.base)
+        cmd = ["pr", "create", "--title", f"labels: bounty #{number}",
+               "--body", body, "--base", args.base]
+        if head:
+            cmd += ["--head", head]
+        url = gh(*cmd)
         print(f"Opened PR: {url}")
     else:
-        print("Committed locally. Re-run with --push to open a PR.")
+        print(f"Committed locally on {branch}. Re-run with --push to open a PR.")
     return 0
 
 
@@ -978,8 +1329,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--batch", type=int, default=1,
                    help="which of --count this invocation is (for resuming)")
     c.add_argument("--dry-run", action="store_true", help="print the issue body only")
-    c.add_argument("--no-lock", action="store_true",
-                   help="leave the issue open to comments from anyone (invites spam)")
+    c.add_argument("--lock", action="store_true",
+                   help="lock the issue to collaborators (breaks zero-permission claims)")
     c.set_defaults(func=cmd_create)
 
     ls = sub.add_parser("list", help="list open bounties")
@@ -999,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sb = sub.add_parser("submit", help="commit labels and open a PR")
     sb.add_argument("--issue", type=int)
+    sb.add_argument("--bounty", default="", help="local bounty id to submit on its own")
     sb.add_argument("--push", action="store_true", help="push and open the PR")
     sb.add_argument("--base", default="main")
     sb.add_argument("--force", action="store_true")
