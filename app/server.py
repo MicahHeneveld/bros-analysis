@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import board as board_mod  # noqa: E402
 import jobs as jobs_mod  # noqa: E402
+import thumbnails  # noqa: E402
 from label_io import Box, LabelStore  # noqa: E402
 from predictions import (  # noqa: E402
     MAX_BOXES,
@@ -998,8 +999,26 @@ class Handler(SimpleHTTPRequestHandler):
         img = self.state.labels.image_path(image_id)
         if not img.exists():
             return self.send_error_json("image not found", 404)
-        data = make_thumb(img, width=160)
+
+        # Precomputed at ingest. This is the path that matters: it is a plain
+        # file read, so it works on the stdlib-only interpreter the app is
+        # normally run with.
+        precomputed = thumbnails.existing(self.state.dataset_root, image_id)
+        if precomputed is not None:
+            try:
+                return self.send_bytes(
+                    precomputed.read_bytes(),
+                    "image/jpeg",
+                    cache="public, max-age=86400",
+                )
+            except OSError:
+                pass
+
+        # Older dataset, no thumbs dir, and cv2 happens to be installed.
+        data = make_thumb(img, width=thumbnails.WIDTH)
         if data is None:
+            # Last resort. Correct, but full size - run scripts/make_thumbs.py
+            # against the dataset to fill the gap without this happening.
             ctype = mimetypes.guess_type(str(img))[0] or "image/jpeg"
             return self.send_bytes(img.read_bytes(), ctype, cache="public, max-age=86400")
         return self.send_bytes(data, "image/jpeg", cache="public, max-age=86400")
@@ -1394,22 +1413,14 @@ def image_size_stdlib(path: Path) -> tuple[int, int]:
     return 0, 0
 
 
-def make_thumb(path: Path, width: int = 160) -> bytes | None:
+def make_thumb(path: Path, width: int = thumbnails.WIDTH) -> bytes | None:
     try:
         import cv2
 
         img = cv2.imread(str(path))
         if img is None:
             return None
-        h, w = img.shape[:2]
-        if w <= 0 or h <= 0:
-            return None
-        scale = width / float(w)
-        resized = cv2.resize(img, (width, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
-        ok, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        if not ok:
-            return None
-        return buf.tobytes()
+        return thumbnails.encode(img, width)
     except Exception:  # noqa: BLE001
         return None
 

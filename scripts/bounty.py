@@ -248,7 +248,15 @@ def download_images(dataset_name: str, dest: Path, force: bool = False) -> bool:
             return False
 
         n = _copy_tree(src, dest)
+        # Thumbs live beside images/ in the dataset, not inside it: the mirror
+        # layout is <dataset>/thumbs/<split>/, matching <dataset>/images/<split>/.
+        thumbs_src = _thumbs_root(extract_to, src)
+        n_thumbs = 0
+        if thumbs_src is not None:
+            n_thumbs = _copy_tree(thumbs_src, dest.parent / "thumbs")
         print(f"  Extracted {n} image(s) into {dest}")
+        if n_thumbs:
+            print(f"  Extracted {n_thumbs} thumbnail(s) into {dest.parent / 'thumbs'}")
         return n > 0
     except (subprocess.CalledProcessError, OSError) as exc:
         print(f"  Download failed: {exc}")
@@ -289,6 +297,26 @@ def _images_root(root: Path) -> Path | None:
     candidates = [p for p in root.rglob("*") if p.is_dir() and _direct_images(p)]
     if candidates:
         return sorted(candidates, key=lambda p: -len(p.parts))[0]
+    return None
+
+
+def _thumbs_root(extract_to: Path, images_root: Path | None) -> Path | None:
+    """The bundle's ``thumbs/`` directory, if it has one.
+
+    Preferred location is the images tree's sibling, which is how the app's own
+    publisher lays the zip out (``images/`` and ``thumbs/`` at the same level).
+    Bundles made by hand can sit anywhere, so a named directory is the fallback.
+    """
+    if images_root is not None:
+        sibling = images_root.parent / "thumbs"
+        if sibling.is_dir() and any(p.is_file() for p in sibling.rglob("*")):
+            return sibling
+    named = [
+        p for p in extract_to.rglob("*")
+        if p.is_dir() and p.name == "thumbs" and any(f.is_file() for f in p.rglob("*"))
+    ]
+    if named:
+        return sorted(named, key=lambda p: len(p.parts))[0]
     return None
 
 

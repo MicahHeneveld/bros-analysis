@@ -25,6 +25,9 @@ data/raw_videos/
 data/frames/
 # Large image sets are always published as release assets, never committed.
 data/datasets/*/images/
+# Filmstrip thumbnails are generated (ingest / make_thumbs.py) and ride along in
+# the image bundle rather than in git.
+data/datasets/*/thumbs/
 
 # Source videos are large; keep them out of history
 *.mp4

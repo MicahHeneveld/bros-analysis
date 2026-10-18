@@ -67,6 +67,7 @@ if not (_HERE / "predictions.py").exists():
 
 from predictions import MAX_BOXES, NMS_IOU, postprocess  # noqa: E402
 import model_paths  # noqa: E402
+import thumbnails  # noqa: E402
 
 REPO_ROOT = _HERE.parent
 DEFAULT_OUT_ROOT = REPO_ROOT / ".staging" / "ingested"
@@ -182,6 +183,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
+    p.add_argument(
+        "--thumb-width", type=int, default=thumbnails.WIDTH,
+        help=(
+            "Width of the filmstrip thumbnail written beside each frame "
+            f"(default {thumbnails.WIDTH}px). Thumbs keep the review strip from "
+            "downloading full-size frames; set 0 to skip them."
+        ),
+    )
     p.add_argument(
         "--seed-labels", action="store_true",
         help=(
@@ -393,8 +402,11 @@ def main() -> int:
     images_dir = dataset / "images" / split
     labels_dir = dataset / "labels" / split
     pred_dir = dataset / "predictions"
+    thumbs_dir = dataset / thumbnails.DIRNAME / split
     for d in (images_dir, labels_dir, pred_dir):
         d.mkdir(parents=True, exist_ok=True)
+    if args.thumb_width > 0:
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
 
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
@@ -469,7 +481,7 @@ def main() -> int:
 
     stats = {
         "sampled": 0, "gated_out": 0, "deduped": 0,
-        "already_present": 0, "saved": 0, "boxes": 0,
+        "already_present": 0, "saved": 0, "boxes": 0, "thumb_bytes": 0,
     }
     heights: list[float] = []
     frame_rows: list[tuple[str, int, float]] = []
@@ -499,6 +511,15 @@ def main() -> int:
             image_path = images_dir / f"{name}.jpg"
             if image_path.exists() and not args.force:
                 stats["already_present"] += 1
+                # The frame is already here, but its thumb may not be: datasets
+                # ingested before thumbs existed are repaired by simply
+                # re-running the same command.
+                if args.thumb_width > 0:
+                    thumb_file = thumbs_dir / f"{name}.jpg"
+                    if not thumb_file.exists():
+                        stats["thumb_bytes"] += thumbnails.write(
+                            frame, thumb_file, width=args.thumb_width
+                        )
                 continue
 
             # Near-duplicate check against the last frame actually written, so a
@@ -517,6 +538,16 @@ def main() -> int:
                 continue
             encoded.tofile(str(image_path))
             thumbnail_state["last"] = thumbnail(frame)
+
+            # Filmstrip thumb. Written here because this is the only stage that
+            # already has the decoded frame and an image library; the review
+            # server has neither.
+            if args.thumb_width > 0:
+                stats["thumb_bytes"] += thumbnails.write(
+                    frame,
+                    thumbs_dir / f"{name}.jpg",
+                    width=args.thumb_width,
+                )
 
             # Labels are empty unless the caller opted into pre-labelling.
             label_path = labels_dir / f"{name}.txt"
@@ -621,6 +652,8 @@ def main() -> int:
             "deduped": stats["deduped"],
             "already_present": stats["already_present"],
             "saved": stats["saved"],
+            "thumbs": args.thumb_width,
+            "thumb_bytes": stats["thumb_bytes"],
             "mean_fighter_height": round(sum(heights) / len(heights), 4) if heights else None,
             "seconds": round(elapsed, 1),
         }
@@ -665,6 +698,9 @@ def print_report(
     print(f"  already there : {stats['already_present']}")
     if stats["saved"]:
         print(f"  boxes/frame   : {stats['boxes'] / stats['saved']:.2f}")
+    if stats["thumb_bytes"]:
+        print(f"  thumbs        : {stats['thumb_bytes'] / 1e6:.1f} MB "
+              f"({args.thumb_width}px wide)")
     print(f"  frames.csv    : {csv_path}")
     print(f"  manifest      : {manifest_path}")
 

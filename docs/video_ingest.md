@@ -154,11 +154,26 @@ python scripts/ingest_video.py match.mp4 --force
 
 `--force` also truncates `predictions/<split>.jsonl` instead of appending.
 
+## Thumbnails for the review filmstrip
+
+Every saved frame gets a 160 px wide JPEG under `thumbs/<split>/`, written from
+the frame already in memory, so it costs one resize and adds ~10 KB per frame.
+Without it the review app has to send the full-size frame for each strip tile:
+roughly 90 MB per 250-frame bounty.
+
+`--thumb-width 0` skips them. To repair a dataset ingested before thumbs existed
+(no need to re-encode the images):
+
+```bash
+.venv-train/bin/python scripts/make_thumbs.py data/datasets/<name>
+```
+
 ## Output layout
 
 ```
 .staging/ingested/<video>/          (or --out)
   images/<split>/                   <video>_frame_NNNNNN.jpg
+  thumbs/<split>/                   160px thumb of each frame (review filmstrip)
   labels/<split>/                   matching .txt (empty unless --seed-labels)
   predictions/<split>.jsonl         raw + cleaned boxes, with time_s
   frames.csv                        timestamp sidecar
