@@ -1313,6 +1313,15 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def image_size(path: Path) -> tuple[int, int]:
+    """Frame dimensions, with a stdlib fallback.
+
+    The review server runs on a plain interpreter on purpose, so ``cv2`` is
+    optional. When it is missing this used to return ``(0, 0)``, and every
+    caller that guards on dimensions (the sample endpoint's prediction clean-up
+    and disagreement metrics) silently treated the frame as having no
+    predictions. Model boxes then never reached the canvas even though the
+    jsonl had them. Parsing the header needs a few dozen bytes and no library.
+    """
     try:
         import cv2
 
@@ -1322,6 +1331,66 @@ def image_size(path: Path) -> tuple[int, int]:
             return int(w), int(h)
     except Exception:  # noqa: BLE001
         pass
+    return image_size_stdlib(path)
+
+
+# SOF markers carry the frame size. C4/C8/CC are not frame headers: DHT, JPG
+# extension, and the arithmetic-coding conditioning table.
+_JPEG_SOF = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                       0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+
+
+def image_size_stdlib(path: Path) -> tuple[int, int]:
+    """Read width/height straight from a JPEG or PNG header.
+
+    Deliberately narrow: these are the formats ingest writes. An unreadable or
+    unsupported file returns ``(0, 0)``, which callers already handle.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+            if head.startswith(b"\x89PNG\r\n\x1a\n") and head[12:16] == b"IHDR":
+                return (
+                    int.from_bytes(head[16:20], "big"),
+                    int.from_bytes(head[20:24], "big"),
+                )
+            if head.startswith(b"BM") and len(head) >= 26:
+                return (
+                    int.from_bytes(head[18:22], "little"),
+                    abs(int.from_bytes(head[22:26], "little")),
+                )
+            if not head.startswith(b"\xff\xd8"):
+                return 0, 0
+            fh.seek(2)
+            while True:
+                marker = fh.read(2)
+                if len(marker) < 2 or marker[0] != 0xFF:
+                    return 0, 0
+                code = marker[1]
+                while code == 0xFF:  # fill bytes
+                    nxt = fh.read(1)
+                    if not nxt:
+                        return 0, 0
+                    code = nxt[0]
+                if code in (0xD8, 0xD9) or 0xD0 <= code <= 0xD7:
+                    continue
+                raw = fh.read(2)
+                if len(raw) < 2:
+                    return 0, 0
+                length = int.from_bytes(raw, "big")
+                if length < 2:
+                    return 0, 0
+                if code in _JPEG_SOF:
+                    body = fh.read(5)
+                    if len(body) < 5:
+                        return 0, 0
+                    return (
+                        int.from_bytes(body[3:5], "big"),
+                        int.from_bytes(body[1:3], "big"),
+                    )
+                fh.seek(length - 2, 1)
+    except OSError:
+        return 0, 0
     return 0, 0
 
 

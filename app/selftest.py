@@ -624,6 +624,48 @@ def test_ingest_gating() -> None:
         ingest.frame_name("m1", 7) == "m1_frame_000007",
     )
 
+    # The review server is zero-dependency, so it cannot assume cv2. Without a
+    # size it used to report 0x0, which silently dropped every model prediction
+    # on the way to the canvas.
+    import struct
+    import zlib
+
+    import server as srv
+
+    def _png(w: int, h: int) -> bytes:
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+        chunk = lambda t, d: (
+            struct.pack(">I", len(d)) + t + d
+            + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+        )
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IEND", b"")
+
+    tmp_img = Path(tempfile.mkdtemp(prefix="imgsize-"))
+    try:
+        png_path = tmp_img / "a.png"
+        png_path.write_bytes(_png(321, 123))
+        check("stdlib reader handles png", srv.image_size_stdlib(png_path) == (321, 123))
+
+        jpg_path = tmp_img / "a.jpg"
+        # Minimal JPEG: SOI, APP0, SOF0 (height 1080, width 1920), EOI.
+        jpg_path.write_bytes(
+            b"\xff\xd8"
+            + b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+            + b"\xff\xc0" + struct.pack(">H", 11) + b"\x08"
+            + struct.pack(">HH", 1080, 1920) + b"\x01\x01\x11\x00"
+            + b"\xff\xd9"
+        )
+        check("stdlib reader handles jpeg", srv.image_size_stdlib(jpg_path) == (1920, 1080))
+        check("unreadable file falls back to 0x0",
+              srv.image_size_stdlib(tmp_img / "missing.jpg") == (0, 0))
+        check("non-image bytes fall back to 0x0",
+              srv.image_size_stdlib(png_path.with_name("x.txt")) == (0, 0))
+        (png_path.with_name("x.txt")).write_text("not an image")
+        check("garbage content falls back to 0x0",
+              srv.image_size_stdlib(png_path.with_name("x.txt")) == (0, 0))
+    finally:
+        shutil.rmtree(tmp_img, ignore_errors=True)
+
 
 def test_distance_metric() -> None:
     """Pin the geometry against a synthetic camera with known ground truth.
