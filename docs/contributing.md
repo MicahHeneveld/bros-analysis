@@ -26,19 +26,21 @@ git clone https://github.com/MicahHeneveld/bros-analysis.git
 cd bros-analysis
 gh auth login                       # needed to claim bounties and open PRs
 python scripts/bounty.py doctor     # tells you exactly what is missing
-python scripts/bounty.py fetch      # downloads the image bundle from releases
 ```
 
-`doctor` will report missing images. Images are large and deliberately not in
-git; they are published as release assets tagged `images-<dataset>`, so:
+`doctor` checks every dataset under `data/datasets/` and prints the one command
+that fixes each gap. Images are large and deliberately not in git — they are
+published as release assets tagged `images-<dataset>`, so a fresh clone looks
+like this:
 
-```bash
-python scripts/bounty.py fetch --dataset data/datasets/ssbu_players
+```
+[MISS] ultrank_11_20: no images (587 MB release available)
+       -> python scripts/bounty.py fetch --dataset data/datasets/ultrank_11_20
 ```
 
-Labels *are* in git, so no download is needed for them. If `doctor` says no
-release exists yet for a dataset, you are the first one there — ask for a bundle
-to be published, or regenerate frames with `scripts/ingest_video.py`.
+Run that. Labels *are* in git, so no download is needed for them. If `doctor`
+says a dataset has no release at all, ask the maintainer to publish one rather
+than regenerating frames yourself.
 
 ### 2. Claim a bounty
 

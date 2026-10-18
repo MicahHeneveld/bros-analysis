@@ -304,6 +304,32 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 # -------------------------------------------------------------------- doctor
+def discover_datasets() -> list[Path]:
+    """Datasets in the repo, not scratch dirs.
+
+    A contributor should not have to know which `--dataset` a bounty uses before
+    they own any work, so doctor checks every dataset here.
+    """
+    root = ROOT / "data" / "datasets"
+    if not root.is_dir():
+        return []
+    found = []
+    for p in sorted(root.iterdir()):
+        if not p.is_dir():
+            continue
+        if (p / "data.yaml").exists() or (p / "labels").is_dir() or (p / "images").is_dir():
+            found.append(p)
+    return found
+
+
+def _count_images(dataset: Path) -> int:
+    images = dataset / "images"
+    if not images.is_dir():
+        return 0
+    return sum(1 for p in images.rglob("*")
+               if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     print("Checking your setup\n")
     ok = True
@@ -327,25 +353,37 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     except (subprocess.CalledProcessError, FileNotFoundError):
         check("gh auth", False, "not signed in or gh missing", "gh auth login")
 
-    dataset = (ROOT / args.dataset).resolve()
-    check("dataset", (dataset / "data.yaml").exists() or (dataset / "labels").is_dir(),
-          str(dataset), "pass --dataset, or stage one with scripts/stage_dataset.py")
-
-    images = dataset / "images"
-    n_images = len(list(images.rglob("*.jpg"))) + len(list(images.rglob("*.png"))) if images.is_dir() else 0
-    check("images", n_images > 0, f"{n_images} files",
-          f"run  python scripts/bounty.py fetch --dataset {args.dataset}")
-
-    # Tell the contributor where the images come from before they go hunting.
-    assets = [a for a in release_assets() if a["dataset"] == dataset.name]
-    if assets:
-        size_mb = assets[0]["size"] / (1024 * 1024)
-        print(f"         available: {assets[0]['tag']} / {assets[0]['name']} ({size_mb:.0f} MB)")
-    elif n_images == 0:
-        print(f"         no release tagged 'images-{dataset.name}' exists yet")
-
     check("python", sys.version_info >= (3, 9), sys.version.split()[0])
-    check("docker", shutil.which("docker") is not None or True, "optional (local container run)")
+
+    datasets = ([Path(args.dataset)] if getattr(args, "dataset", "") else discover_datasets())
+    if not datasets:
+        check("dataset", False, "none found under data/datasets",
+              "stage one with scripts/stage_dataset.py")
+
+    releases = release_assets()
+    for dataset in datasets:
+        dataset = dataset.resolve()
+        name = dataset.name
+        n_images = _count_images(dataset)
+        has_preds = (dataset / "predictions").is_dir()
+        n_labels = labelled_frames(dataset)
+        asset = next((a for a in releases if a["dataset"] == name), None)
+
+        # One line per dataset: the thing a newcomer needs is "can I start on
+        # this one, and if not what single command fixes it".
+        if n_images:
+            print(f"  [ok  ] {name}: {n_images} images"
+                  + (f", predictions" if has_preds else ", no predictions")
+                  + (f", {n_labels} labelled" if n_labels else ", unlabelled"))
+        elif asset:
+            ok = False
+            size_mb = asset["size"] / (1024 * 1024)
+            print(f"  [MISS] {name}: no images ({size_mb:.0f} MB release available)")
+            print(f"         -> python scripts/bounty.py fetch --dataset data/datasets/{name}")
+        else:
+            # Nothing the contributor can do, and it may be a dataset they will
+            # never touch. Reporting MISS would block "Ready" forever.
+            print(f"  [--  ] {name}: no images and no bundle published (nothing to do)")
 
     print()
     if ok:
@@ -731,7 +769,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor", help="check your setup")
-    d.add_argument("--dataset", default="data/datasets/ssbu_players")
+    d.add_argument("--dataset", default="",
+                   help="one dataset; default checks everything under data/datasets")
     d.set_defaults(func=cmd_doctor)
 
     f = sub.add_parser("fetch", help="download the image bundle for a dataset")
