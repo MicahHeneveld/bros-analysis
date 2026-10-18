@@ -43,14 +43,20 @@ python scripts/bounty.py fetch --models --run smash_player_colab_v4
 python scripts/ingest_video.py match.mp4
 ```
 
-Defaults: 5 frames/second, output in `.staging/ingested/<video-name>/`. Frames
-are gated so only ones showing two players are kept, and the model's boxes are
-written to `predictions/<split>.jsonl` *beside* empty label files.
+Defaults: 5 frames/second, output in `.staging/ingested/<video-name>/`. Every
+sampled frame is kept — menus, results screens and single-fighter gameplay
+included — and the model's boxes are written to `predictions/<split>.jsonl`
+*between* empty label files.
 
 Labels start empty on purpose. If the model's guesses were copied into the label
 files, the dataset would contain its own predictions and training on it would
 teach the model to agree with itself. Use `--seed-labels` only when you intend to
 review every frame afterwards anyway.
+
+To exclude frames you have to ask: `--min-players 2` keeps only frames with two
+confident fighters (it drops menus, but also gameplay where one fighter is
+off-screen), and `--dedupe 1.0` collapses near-identical frames. Both are off by
+default and both are counted in the run report.
 
 Useful bounds while you are getting a feel for the footage:
 
@@ -67,9 +73,10 @@ python app/server.py --dataset .staging/ingested/match \
 ```
 
 Press `p` for the Both view (labels solid, predictions dashed), then `a` to adopt
-boxes you agree with. Unreviewed frames have **no** label file; a frame you mark
-"not gameplay" gets an **empty** label file. Training treats those differently —
-see step 4.
+boxes you agree with. Every ingest frame gets a label file, empty until somebody
+labels it; what makes it trainable is your review decision, which is recorded in
+`.review/review_state.json`. A frame you mark "not gameplay" is a real negative:
+it stays empty and *is* trained on as background. See step 4.
 
 ### Distance between fighters
 
@@ -136,10 +143,13 @@ Two behaviours worth knowing:
   frame N in train and N+1 in val, and val would effectively be memorised. Blocks
   are assigned whole, and a guard band is dropped on each side of a boundary.
   The report prints the leakage count, which should be `0`.
-- **Unreviewed frames are skipped.** No `.txt` means nobody looked at it. An
-  empty `.txt` means someone looked and there are no players. Only the second is
-  training data, so the tool refuses to train on the backlog and tells you how
-  many frames are waiting.
+- **Unreviewed frames are skipped.** Ingest writes a label file for every frame,
+  so file existence cannot tell a reviewed background frame from one nobody
+  opened. The review store (`.review/review_state.json`) is authoritative: only
+  frames marked good, bad or empty are trainable. An empty label file on a
+  reviewed frame is a real negative and *is* used. Datasets with no review store
+  fall back to the older rule (no `.txt` = unreviewed), and the report tells you
+  how many frames are waiting.
 
 Then train:
 

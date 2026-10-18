@@ -7,9 +7,12 @@ things that the existing scripts each do only one of:
 1. Samples the video at a fixed *target* frame rate (not "every Nth frame"), so
    the resulting time step is meaningful and comparable across videos with
    different source frame rates.
-2. Drops non-gameplay frames (menus, loading screens, results) by asking the
-   detector whether it can see the expected number of fighters. No separate
-   classifier is needed and there is nothing extra to train.
+2. Keeps **every sampled frame**, including menus, results screens and frames
+   with no visible fighter. Non-gameplay frames are the only negatives in a
+   video dataset, so dropping them teaches the model that "no box" never
+   happens. Gating and duplicate suppression still exist, but are opt-in
+   (`--min-players`, `--dedupe`) because they also throw away real gameplay:
+   a frame where one fighter is off-screen or hidden fails a two-player test.
 3. Runs inference in bounded batches, reusing the chunking lessons from
    ``predict_ssbu.py`` so a long video cannot balloon memory.
 4. Writes a YOLO dataset the review app can open directly, plus a
@@ -23,13 +26,18 @@ review every frame before training.
 
 Examples
 --------
-Sample a match at 5 fps and keep only frames showing both fighters::
+Sample a match at 5 fps and keep everything (the default)::
 
     python scripts/ingest_video.py match.mp4
 
 Only the section from 2:00 to 6:30, at 10 fps, pre-filling the label files::
 
     python scripts/ingest_video.py match.mp4 --start 120 --end 390 --fps 10 --seed-labels
+
+Keep only frames where both fighters are clearly visible (drops gameplay where
+one is off-screen, so use it with that in mind)::
+
+    python scripts/ingest_video.py match.mp4 --min-players 2
 
 Then review it::
 
@@ -91,6 +99,15 @@ def parse_args() -> argparse.Namespace:
         help="Split folder name to write into (default: the video stem).",
     )
     p.add_argument(
+        "--name-prefix", default=None,
+        help=(
+            "Frame filename prefix (default: the video stem, slugified and capped "
+            "at 60 chars). Set it to the raw stem when appending to a dataset that "
+            "was built before names were slugified, so existing frames are matched "
+            "and the time order stays contiguous."
+        ),
+    )
+    p.add_argument(
         "--fps", type=float, default=5.0,
         help="Target sampling rate in frames/second (default 5).",
     )
@@ -125,14 +142,21 @@ def parse_args() -> argparse.Namespace:
         help="Compute device ('mps', 'cuda', 'cpu'). Default: mps when available.",
     )
 
-    # Gating
+    # Gating. Off by default: every sampled frame is training data, including
+    # menus and frames where a fighter is temporarily off-screen. Turning it on
+    # is a deliberate filter, not a quality default.
     p.add_argument(
-        "--min-players", type=int, default=2,
-        help="Require this many confident, plausibly-sized detections (default 2; 0 disables gating).",
+        "--min-players", type=int, default=0,
+        help=(
+            "EXCLUDES frames: keep a frame only if this many confident, "
+            "plausibly-sized fighters are detected (default 0 = keep everything). "
+            "2 drops menus but also drops gameplay where one fighter is "
+            "off-screen, hidden or in a KO animation."
+        ),
     )
     p.add_argument(
         "--player-conf", type=float, default=0.35,
-        help="Detection confidence needed to count as a visible player (default 0.35).",
+        help="Detection confidence needed to count as a visible player for --min-players.",
     )
     p.add_argument(
         "--min-height", type=float, default=0.04,
@@ -149,11 +173,12 @@ def parse_args() -> argparse.Namespace:
 
     # Output
     p.add_argument(
-        "--dedupe", type=float, default=1.0,
+        "--dedupe", type=float, default=0.0,
         help=(
-            "Skip a frame whose 32x32 grayscale thumbnail differs from the last "
-            "saved frame by less than this mean absolute difference (0-255 scale, "
-            "default 1.0). 0 disables. Suppresses static pause screens and holds."
+            "EXCLUDES frames: skip a frame whose 32x32 grayscale thumbnail differs "
+            "from the last saved frame by less than this mean absolute difference "
+            "(0-255 scale). Default 0 keeps everything, including near-identical "
+            "pause screens. Raise it only if you want static holds collapsed."
         ),
     )
     p.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
@@ -296,6 +321,15 @@ def slugify(text: str, max_length: int = 60) -> str:
     return slug[:max_length].strip("_") or "video"
 
 
+def frame_name(prefix: str, frame_idx: int) -> str:
+    """One frame's image/label stem.
+
+    ``prefix`` is the slug by default, but can be the raw video title when
+    appending to a dataset that predates slugify().
+    """
+    return f"{prefix}_frame_{frame_idx:06d}"
+
+
 def label_line(box: dict) -> str:
     return (
         f"{int(box['cls'])} {float(box['xc']):.6f} {float(box['yc']):.6f} "
@@ -347,6 +381,13 @@ def main() -> int:
         return 2
 
     stem_slug = slugify(video.stem)
+    # A dataset ingested before slugify() used the raw title as the prefix.
+    # Re-ingesting it must find those frames, or every frame is duplicated
+    # under a second name and bounty slices stop matching the video.
+    frame_prefix = (args.name_prefix or stem_slug).strip() or stem_slug
+    if "/" in frame_prefix or "\\" in frame_prefix:
+        print("ERROR: --name-prefix must not contain a path separator")
+        return 2
     dataset = (args.out.expanduser() if args.out else DEFAULT_OUT_ROOT / stem_slug)
     split = args.split or stem_slug
     images_dir = dataset / "images" / split
@@ -388,9 +429,17 @@ def main() -> int:
     print(f"Segments: {args.start:.1f}s .. "
           f"{args.end if args.end else 'end'}")
     print(f"Output  : {dataset}  (split '{split}')")
+    print(f"Frames  : {frame_prefix}_frame_NNNNNN.jpg")
     print(f"Weights : {weights}")
-    print(f"Gating  : >= {args.min_players} player(s) at conf >= {args.player_conf}"
-          if args.min_players > 0 else "Gating  : disabled")
+    if args.min_players > 0 or args.dedupe > 0:
+        parts = []
+        if args.min_players > 0:
+            parts.append(f">= {args.min_players} player(s) at conf >= {args.player_conf}")
+        if args.dedupe > 0:
+            parts.append(f"near-duplicates < {args.dedupe}")
+        print(f"Filters : {' and '.join(parts)}  (these EXCLUDE frames)")
+    else:
+        print("Filters : none - every sampled frame is kept")
     print()
 
     if args.no_stage:
@@ -445,7 +494,7 @@ def main() -> int:
                     stats["gated_out"] += 1
                     continue
 
-            name = f"{stem_slug}_frame_{frame_idx:06d}"
+            name = frame_name(frame_prefix, frame_idx)
             image_id = f"{split}/{name}"
             image_path = images_dir / f"{name}.jpg"
             if image_path.exists() and not args.force:
@@ -515,7 +564,7 @@ def main() -> int:
                     stop_early = True
                 if len(batch) >= max(1, args.batch):
                     flush(batch, fh)
-                    print(f"  {stats['sampled']} sampled -> {stats['saved']} kept", flush=True)
+                    print(f"  {stats['sampled']} sampled -> {stats['saved']} saved", flush=True)
                     batch = []
                     gc.collect()
                     release_cache()
@@ -604,16 +653,26 @@ def print_report(
 ) -> None:
 
     kept_pct = 100 * stats["saved"] / stats["sampled"] if stats["sampled"] else 0.0
+    excluded = stats["gated_out"] + stats["deduped"]
     print()
     print(f"Sampled {stats['sampled']} frame(s) in {elapsed:.1f}s")
     print(f"  kept          : {stats['saved']} ({kept_pct:.0f}%)")
-    print(f"  not gameplay  : {stats['gated_out']}")
-    print(f"  near-duplicate: {stats['deduped']}")
+    if stats["gated_out"]:
+        print(f"  excluded      : {stats['gated_out']} below --min-players "
+              f"{args.min_players}")
+    if stats["deduped"]:
+        print(f"  excluded      : {stats['deduped']} near-duplicates (--dedupe {args.dedupe:g})")
     print(f"  already there : {stats['already_present']}")
     if stats["saved"]:
         print(f"  boxes/frame   : {stats['boxes'] / stats['saved']:.2f}")
     print(f"  frames.csv    : {csv_path}")
     print(f"  manifest      : {manifest_path}")
+
+    if excluded:
+        print()
+        print(f"  {excluded} sampled frame(s) were excluded by an explicit filter.")
+        print("  Omit --min-players / --dedupe to keep every sampled frame; frames")
+        print("  with no fighter are useful negatives, not noise.")
 
     if stats["saved"] == 0:
         if stats["already_present"] > 0:
@@ -623,16 +682,16 @@ def print_report(
             return
         print()
         print("Nothing was kept. Common causes:")
-        print("  - the segment is not gameplay (try --min-players 0 to see everything)")
-        print("  - --player-conf is too high for this footage")
-        print("  - the video is a menu / results screen")
+        print("  - the segment is covered by --min-players / --dedupe (try omitting them)")
+        print("  - every frame failed to encode or is already on disk")
         return
 
     if stats["sampled"] >= 20 and stats["gated_out"] > stats["sampled"] * 0.5:
         print()
         print(f"  warning: {100 * stats['gated_out'] / stats['sampled']:.0f}% of frames were "
-              "rejected as non-gameplay.")
-        print("  If this footage is gameplay, lower --player-conf or --min-players.")
+              "excluded by --min-players.")
+        print("  That is usually single-fighter gameplay, not just menus. Drop the flag")
+        print("  to keep everything, and review the frames instead of filtering them.")
 
     print()
     print("Review it:")

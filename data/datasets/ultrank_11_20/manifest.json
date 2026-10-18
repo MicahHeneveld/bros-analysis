@@ -9,25 +9,25 @@
       "start_s": 0.0,
       "end_s": null,
       "sampled": 5021,
-      "gated_out": 3367,
+      "gated_out": 0,
       "deduped": 0,
-      "already_present": 0,
-      "saved": 1654,
-      "mean_fighter_height": 0.2323,
-      "seconds": 155.8
+      "already_present": 1654,
+      "saved": 3367,
+      "mean_fighter_height": 0.2791,
+      "seconds": 157.7
     }
   },
-  "dataset": ".staging/ingested/ultrank_11_20",
-  "updated": "2026-10-17T15:23:07",
+  "dataset": "data/datasets/ultrank_11_20",
+  "updated": "2026-10-18T12:44:16",
   "params": {
     "fps": 5.0,
     "stride": 12,
     "effective_fps": 5.0,
     "conf": 0.25,
     "player_conf": 0.35,
-    "min_players": 2,
+    "min_players": 0,
     "max_boxes": 2,
-    "dedupe": 1.0,
+    "dedupe": 0.0,
     "seed_labels": false,
     "weights": "/Users/micahheneveld/bros-analysis/.staging/runs/smash_player_colab_v4/weights/best.pt"
   }

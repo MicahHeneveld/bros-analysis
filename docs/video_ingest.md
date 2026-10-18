@@ -46,44 +46,59 @@ match/match_frame_000123,123,4.1
 match/match_frame_000126,126,4.2
 ```
 
-Gaps in that time column are meaningful: they mark where the gate removed a menu
-or a cut. Use them to split a video into matches.
+Gaps in that time column mean the video itself jumped (a cut) or that an opt-in
+filter was enabled. By default every sampled frame is present, so the column is
+a dense, evenly spaced clock. Split a video into matches with it if you like.
 
-## How gameplay gating works
+## Every frame is kept (default)
 
-No second model, nothing to train. The detector is asked whether it can see the
-expected number of fighters, and a frame is kept only if it can:
+Ingest does not throw frames away. A menu, a results screen and a frame where
+one fighter is off-screen are all still data:
 
-- at least `--min-players` detections (default **2**, this is 1v1 footage)
-- each above `--player-conf` (default **0.35**)
-- each with a plausible height, `--min-height` .. `--max-height` (default **0.04–0.90**)
-- each taller than wide, `--min-aspect` (default **0.45**)
+- Frames with no fighter are the **negatives** that teach the model what "no
+  player here" looks like. A model trained only on gameplay boxes will put a box
+  on every HUD element the first time it sees a full VOD.
+- Gameplay frames are frequently single-fighter: a KO, a respawn, a character
+  hidden behind an effect, a zoomed combo clip. Requiring two detections throws
+  those away even though they are perfectly good training data.
 
-Menus, loading screens and results cards fail on the first test. UI banners that
-the detector mistakes for players fail the height/aspect tests.
+Empty label files on these frames are intentional. They become training
+negatives once a reviewer marks the frame, and `split_dataset.py` only trains on
+frames the review store says a human looked at.
 
-Tuning for unusual footage:
+## Opt-in filters (they exclude frames)
+
+The old behaviour is still available, but it is now something you ask for:
 
 ```bash
---min-players 0        # keep everything (debug what the gate is rejecting)
---player-conf 0.2      # dark stages, heavy motion blur, small characters
---max-height 0.95      # very zoomed-in close-ups
+--min-players 2     # only frames with two confident fighters; drops menus AND
+                    # single-fighter gameplay
+--dedupe 1.0        # collapse near-identical frames (static pause screens)
 ```
 
-If more than half of a run is rejected, the script warns. That is usually a
-non-gameplay segment rather than a gate problem, but a low `--player-conf` fixes
-the other case.
+`--min-players` counts detections that pass all of these:
+
+- confidence above `--player-conf` (default **0.35**)
+- height between `--min-height` .. `--max-height` (default **0.04–0.90**)
+- taller than wide, `--min-aspect` (default **0.45**)
+
+Both filters default to **off**, every excluded frame is counted in the report,
+and `manifest.json` records the values used, so a run that filtered its input is
+auditable. If more than half a gated run is rejected, the script warns: on the
+UltRank test video `--min-players 2` rejected 67% of samples, and spot-checking
+the rejected frames found they were single-fighter gameplay, not menus.
 
 ## Duplicate suppression
 
 `--dedupe` compares each candidate against the **last frame actually written**
 using a 32×32 grayscale signature, and skips it if the mean absolute difference
-is below the threshold (default **1.0** of 255). Comparing against the last
-*written* frame rather than the last *sampled* one means a slow camera pan keeps
-its frames, while a static pause screen collapses to a single frame.
+is below the threshold. Comparing against the last *written* frame rather than
+the last *sampled* one means a slow camera pan keeps its frames, while a static
+pause screen collapses to a single frame.
 
-`--dedupe 0` disables it. Do that when you want a dense, evenly spaced series for
-tracking or distance measurement, where every timestep matters.
+It is off by default (`--dedupe 0`). Turn it on only when disk or review time is
+the constraint — near-identical frames are cheap negatives, and a paused results
+screen at 5 fps costs 25 frames per five seconds.
 
 ## Labels: empty by default, on purpose
 
@@ -111,6 +126,25 @@ Re-running the same command is safe. Frames already on disk are counted as
 `already there` and skipped, and the previous `manifest.json` entry is preserved
 rather than overwritten with zeros. That makes an interrupted long ingest simply
 re-runnable, and it exits `0` when there was nothing left to do.
+
+Because of that, an older dataset that was ingested before the filters were made
+opt-in can be backfilled in place: re-run the same video **without**
+`--min-players` / `--dedupe` (or with `--min-players 0`). Existing frames are
+left alone and the previously excluded ones are added to `images/`,
+`predictions/` and `frames.csv`.
+
+Datasets ingested before frame names were slugified use the raw video title as
+the filename prefix. Re-ingesting those needs the same prefix, or every existing
+frame is duplicated under a second name:
+
+```bash
+python scripts/ingest_video.py "Top 50 ... (1080p).mp4" \
+    -o data/datasets/<name> --split <name> \
+    --name-prefix "Top 50 ... (1080p)"
+```
+
+Keep the prefix identical to the existing filenames: bounty slices are cut from
+the sorted image list, so mixed prefixes interleave frames out of time order.
 
 To force a rewrite:
 
@@ -150,13 +184,13 @@ about 18,000 sampled frames, so budget 10–20 minutes.
   frames. That matters for distance work — see the roadmap.
 - **No scene-cut detection.** Cuts show up as gaps in `frames.csv` but are not
   labelled as such. Splitting a montage into matches is still manual.
-- **The gate trusts the detector.** If the model is weak on a stage or skin, the
-  gate rejects good frames. `--min-players 0` shows what it is throwing away.
-- **Montage videos lose their single-player clips.** `--min-players 2` keeps only
-  frames with both fighters, which is right for distance work but discards
-  zoomed combo clips that would still be useful training data. For a montage,
-  either accept the loss (~33% of frames survived on the UltRank test video) or
-  run a second pass with `--min-players 1` into a separate output directory.
+- **Filters trust the detector.** If you turn on `--min-players`, a model that is
+  weak on a stage or skin will drop good frames with it. That is why it is off by
+  default: the audit of the UltRank test video showed 67% of samples rejected and
+  the rejected frames were overwhelmingly single-fighter gameplay, not menus.
+- **A bigger dataset means more review.** Keeping every frame roughly triples
+  the frame count at 5 fps on interview/montage footage. That is the intended
+  trade: unreviewed frames are cheap to store and expensive to be wrong about.
 
 ## Reviewing a video: the two modes
 
@@ -184,12 +218,11 @@ The player does not re-run inference. It replays the timeline already on disk:
 
 ### Why boxes disappear
 
-Sampling is sparse and menus are gated out, so the box overlay is driven by the
-nearest kept frame and hidden once the playhead is more than one sampling
-interval away (bounded to 0.2–0.6 s). On this dataset that means ~0.2 s coverage,
-which is contiguous during gameplay and blank during the ~20 s menu gaps. An
-empty overlay therefore means "this dataset has no frame here", not "the model
-found nothing".
+The overlay is driven by the nearest kept frame and hidden once the playhead is
+more than one sampling interval away (bounded to 0.2–0.6 s), so it never shows a
+box on a frame it was not measured on. With the default ingest (every sampled
+frame kept) coverage is contiguous. On a dataset built with `--min-players` or a
+low `--fps` you will see blank stretches over the gaps in `frames.csv`.
 
 Untick **Follow sampled frames** to hold the nearest box regardless of distance;
 useful when scrubbing quickly, misleading over a menu.

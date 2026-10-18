@@ -17,12 +17,18 @@ So frames are grouped into contiguous blocks, whole blocks are assigned to one
 side, and a guard band is dropped on both sides of each train/val boundary. The
 report prints how many cross-split neighbours remain, which should be zero.
 
-Why missing label files are skipped
------------------------------------
+Why unreviewed frames are skipped
+---------------------------------
 A missing `.txt` means nobody has reviewed that frame. An *empty* `.txt` means
 someone reviewed it and there are no players (a genuine background frame). Only
 the second is training data. Treating them the same would teach the model that
 "no box" is the answer for frames no human ever looked at.
+
+Ingest deliberately writes an empty `.txt` for every frame it saves, so file
+existence alone cannot tell those two cases apart. When the dataset has a review
+store (`.review/review_state.json`, written by the review app) that store is
+authoritative: only frames marked good / bad / empty are trainable. Datasets
+without one fall back to the label-file rule above.
 """
 
 from __future__ import annotations
@@ -41,6 +47,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 FRAME_RE = re.compile(r"_frame_(\d+)$")
+# Statuses the review app writes when a human has made a decision. "bad" still
+# counts: the frame was judged, and its label file is the corrected answer.
+TRAINABLE_STATUSES = ("good", "bad", "empty")
 
 
 @dataclass
@@ -120,14 +129,47 @@ def load_times(dataset: Path) -> dict[str, float]:
     return times
 
 
+def load_review_status(dataset: Path) -> dict[str, str] | None:
+    """Per-image review status, or None when the dataset has no review store.
+
+    Returns ``{image_id: status}``. ``image_id`` is ``<split>/<stem>``, matching
+    what the server hands the review app and what ``review_state.json`` keys on.
+
+    A store that exists but cannot be parsed is a hard error: falling back to the
+    label-file rule would quietly train on the unreviewed backlog.
+    """
+    path = dataset / ".review" / "review_state.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    except ValueError as exc:
+        raise SystemExit(
+            f"{path} is not valid JSON ({exc}); refusing to guess which frames are reviewed"
+        ) from exc
+    images = data.get("images") if isinstance(data, dict) else None
+    if images is None and isinstance(data, dict):
+        images = data
+    if not isinstance(images, dict):
+        raise SystemExit(f"{path} has no 'images' map; refusing to guess which frames are reviewed")
+    out: dict[str, str] = {}
+    for key, value in images.items():
+        status = value.get("status") if isinstance(value, dict) else ""
+        out[str(key)] = str(status or "")
+    return out
+
+
 def collect_frames(dataset: Path) -> tuple[list[Frame], dict[str, int]]:
-    """Every image that has a label file, plus a count of what was skipped."""
+    """Every trainable image, plus a count of what was skipped."""
     images_root = dataset / "images"
     labels_root = dataset / "labels"
     if not images_root.is_dir():
         raise SystemExit(f"No images/ directory in {dataset}")
 
     times = load_times(dataset)
+    statuses = load_review_status(dataset)
     stats = {"unreviewed": 0, "no_label_dir": 0}
     frames: list[Frame] = []
 
@@ -142,6 +184,13 @@ def collect_frames(dataset: Path) -> tuple[list[Frame], dict[str, int]]:
             if alt.exists():
                 label = alt
             else:
+                stats["unreviewed"] += 1
+                continue
+
+        # Ingest writes an empty label for every frame, so the store - not the
+        # label file - is what says whether a human has looked at this one.
+        if statuses is not None:
+            if statuses.get(f"{source}/{image.stem}", "") not in TRAINABLE_STATUSES:
                 stats["unreviewed"] += 1
                 continue
 
@@ -309,7 +358,7 @@ def main() -> int:
     if not frames:
         print(f"No trainable frames in {dataset}.")
         if stats["unreviewed"]:
-            print(f"  {stats['unreviewed']} image(s) have no label file — none reviewed yet.")
+            print(f"  {stats['unreviewed']} image(s) are unreviewed — none are trainable yet.")
             print("  Review them in the app first; unreviewed frames must not be trained on.")
         elif stats["no_label_dir"]:
             print("  There is no labels/ directory at all.")
@@ -327,7 +376,7 @@ def main() -> int:
     print(f"Output   : {out}")
     print(f"Labelled : {len(frames)} frame(s) across {len(blocks)} block(s)")
     if stats["unreviewed"]:
-        print(f"Skipped  : {stats['unreviewed']} unreviewed frame(s) (no label file)")
+        print(f"Skipped  : {stats['unreviewed']} unreviewed frame(s)")
     print(f"Guard    : {len(dropped)} frame(s) dropped at split boundaries")
     print(f"Train    : {len(train)}")
     print(f"Val      : {len(val)}  ({len(val) / max(1, len(train) + len(val)):.1%})")

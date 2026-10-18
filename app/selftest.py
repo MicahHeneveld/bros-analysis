@@ -598,6 +598,32 @@ def test_ingest_gating() -> None:
         float(ingest.thumbnail(__import__("numpy").zeros((100, 100, 3), dtype="uint8")).sum()) == 0.0,
     )
 
+    # Keeping every frame is the product default. Gating exists, but only as an
+    # explicit filter: it cannot tell a menu from gameplay where one fighter is
+    # off-screen, and it silently discarded a third of the UltRank test video.
+    saved_argv = sys.argv
+    sys.argv = ["ingest_video.py", "match.mp4"]
+    try:
+        defaults = ingest.parse_args()
+    finally:
+        sys.argv = saved_argv
+    check("gating is off by default", defaults.min_players == 0, str(defaults.min_players))
+    check(
+        "near-duplicate suppression is off by default",
+        defaults.dedupe == 0.0,
+        str(defaults.dedupe),
+    )
+    # Backfilling a pre-slugify dataset depends on reproducing its exact names.
+    check(
+        "frame name honours an explicit prefix",
+        ingest.frame_name("Top 50 UltRank 2026.1 #11-20", 2844)
+        == "Top 50 UltRank 2026.1 #11-20_frame_002844",
+    )
+    check(
+        "frame name zero-pads to six digits",
+        ingest.frame_name("m1", 7) == "m1_frame_000007",
+    )
+
 
 def test_distance_metric() -> None:
     """Pin the geometry against a synthetic camera with known ground truth.
@@ -1529,6 +1555,56 @@ def test_split_dataset() -> None:
         yaml = sd.data_yaml_text(root)
         check("data.yaml points at train/val",
               "train: images/train" in yaml and "val: images/val" in yaml, yaml)
+
+        # With a review store present, the store decides what is trainable.
+        # Ingest writes an empty .txt for every frame, so file existence alone
+        # would let unreviewed (and even model-seeded) frames in as negatives.
+        rated = tmp / "rated"
+        (rated / "images" / "m1").mkdir(parents=True)
+        (rated / "labels" / "m1").mkdir(parents=True)
+        (rated / ".review").mkdir(parents=True)
+        statuses = {
+            "m1/m1_frame_000000": "good",
+            "m1/m1_frame_000003": "empty",   # reviewed: no players, a real negative
+            "m1/m1_frame_000006": "bad",     # reviewed and corrected
+            "m1/m1_frame_000009": "unreviewed",
+            "m1/m1_frame_000012": "unreviewed",
+            "m1/m1_frame_000015": "unreviewed",
+        }
+        for i, (image_id, status) in enumerate(statuses.items()):
+            stem = image_id.split("/", 1)[1]
+            (rated / "images" / "m1" / f"{stem}.jpg").write_bytes(b"x")
+            # Deliberately give EVERY frame a label file, including the
+            # unreviewed ones and one carrying seeded model boxes.
+            body = "0 0.5 0.5 0.1 0.2\n" if i == 3 else ""
+            (rated / "labels" / "m1" / f"{stem}.txt").write_text(body)
+        (rated / ".review" / "review_state.json").write_text(json.dumps(
+            {"version": 1, "images": {k: {"status": v} for k, v in statuses.items()}}
+        ))
+
+        rated_frames, rated_stats = sd.collect_frames(rated)
+        check("review store is loaded", sd.load_review_status(rated) is not None)
+        check("only reviewed frames are trainable", len(rated_frames) == 3,
+              str(sorted(f.stem for f in rated_frames)))
+        check("unreviewed count comes from the store", rated_stats["unreviewed"] == 3,
+              str(rated_stats))
+        check("reviewed empty label is a kept negative",
+              any(f.stem == "m1_frame_000003" for f in rated_frames))
+        check("seeded boxes on an unreviewed frame are not trained on",
+              all(f.stem != "m1_frame_000009" for f in rated_frames))
+        check("datasets without a store keep the label-file fallback",
+              sd.load_review_status(root) is None)
+
+        # A corrupt store must fail loudly, not fall back to "everything is
+        # labelled" - that would train on the backlog with empty boxes.
+        broken = tmp / "broken"
+        (broken / ".review").mkdir(parents=True)
+        (broken / ".review" / "review_state.json").write_text("{not json")
+        try:
+            sd.load_review_status(broken)
+            check("corrupt review store fails loudly", False, "no error raised")
+        except SystemExit:
+            check("corrupt review store fails loudly", True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

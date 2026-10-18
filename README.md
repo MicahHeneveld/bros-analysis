@@ -101,7 +101,7 @@ What that unlocks, and where each is documented:
 
 | Command | Job | Needs |
 | :--- | :--- | :--- |
-| `scripts/ingest_video.py` | MP4 → gated, pre-labelled frames | torch, ultralytics, opencv, numpy |
+| `scripts/ingest_video.py` | MP4 → every sampled frame, pre-labelled | torch, ultralytics, opencv, numpy |
 | `scripts/extract_frames.py` | VOD → frames (raw, no gating) | opencv |
 | `scripts/stage_dataset.py` | Drive dataset zip → local `.staging/` | pyyaml |
 | `scripts/train_ssbu.py` · `notebooks/` | Training and prediction | ultralytics, torch (+ Colab) |
@@ -207,10 +207,10 @@ app/
   label_io.py                # YOLO parse/serialize, atomic writes, journal, backups
   review_store.py            # review status, reasons, notes, progress
   server.py                  # stdlib HTTP server: API + static + thumbnails
-  selftest.py                # 327 assertions, no test framework needed
+  selftest.py                # 356 assertions, no test framework needed
   static/                    # index.html, style.css, app.js (canvas editor)
 scripts/
-  ingest_video.py            # MP4 → gated frames + pre-labels, ready to review
+  ingest_video.py            # MP4 → every sampled frame + pre-labels, ready to review
   extract_frames.py          # VOD → frames (raw, no gating)
   prepare_cvat_import.py     # YOLO preds → CVAT zip
   check_drive_layout.py      # Drive folder sanity check
@@ -237,15 +237,19 @@ data/datasets/ssbu_players/  # historical early labels only
 ## Pre-labelling a new video
 
 One command turns a `.mp4` into a reviewable, pre-labelled frame set. It samples
-at a fixed rate, drops menus/loading/results by asking the detector whether it
-can see both fighters, and collapses near-duplicate frames.
+at a fixed rate and keeps **every** sampled frame — menus, results screens and
+single-fighter clips included, because those are the negatives that stop the
+model from boxing a HUD. Excluding frames is opt-in (`--min-players`, `--dedupe`).
 
 ```bash
-# 5 fps, gate to gameplay-only, labels left empty (model boxes shown as overlay)
+# 5 fps, keep everything, labels left empty (model boxes shown as overlay)
 python scripts/ingest_video.py match.mp4
 
 # only one match segment, pre-filling the label files
 python scripts/ingest_video.py match.mp4 --start 120 --end 390 --fps 10 --seed-labels
+
+# opt-in: keep only frames with both fighters clearly visible
+python scripts/ingest_video.py match.mp4 --min-players 2
 ```
 
 Output lands in `.staging/ingested/<video>/` as a normal YOLO dataset:
@@ -308,7 +312,7 @@ predictions feed back into review:
 
 ```mermaid
 flowchart LR
-    V["VOD .mp4"] --> I["ingest_video.py<br/>sample + gate"]
+    V["VOD .mp4"] --> I["ingest_video.py<br/>sample every frame"]
     V --> X["extract_frames.py"]
 
     I --> P["frames +<br/>model predictions"]
