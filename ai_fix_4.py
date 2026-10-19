@@ -1,29 +1,51 @@
 import cv2
-import numpy as np
+import os
 
-def load_model_boxes(frame_path):
-    # Placeholder function to load model boxes
-    # Replace this with actual logic to load model boxes
-    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
+# Constants
+DATASET_PATH = 'path/to/ultrank_11_20'
+LABELS_PATH = 'path/to/labels'
+FRAME_COUNT = 250
 
-def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
-    for box in boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
-    return image
+# Load model predictions (assuming a function that loads predictions for a given frame)
+def load_model_predictions(frame_path):
+    # Placeholder function
+    return cv2.imread(frame_path, cv2.IMREAD_GRAYSCALE)
 
-def label_frame(frame_path, model_boxes):
-    image = cv2.imread(frame_path)
-    image_with_boxes = draw_boxes(image.copy(), model_boxes)
-    cv2.imshow('Label Frame', image_with_boxes)
-    cv2.waitKey(0)
+# Save labels (assuming a function that saves labels for a given frame)
+def save_labels(frame_path, labels):
+    # Placeholder function
+    cv2.imwrite(frame_path, labels)
+
+# Main labeling loop
+for frame_index in range(FRAME_COUNT):
+    frame_path = os.path.join(DATASET_PATH, f'frame_{frame_index}.jpg')
+    model_predictions = load_model_predictions(frame_path)
+    
+    # Display model predictions
+    cv2.imshow('Frame', model_predictions)
+    
+    while True:
+        key = cv2.waitKey(0) & 0xFF
+        
+        if key == ord('a'):
+            # Adopt model predictions and correct them
+            corrected_labels = model_predictions.copy()
+            # Placeholder for correction logic
+            cv2.imshow('Corrected Frame', corrected_labels)
+        elif key == ord('d'):
+            # Draw new boxes
+            new_labels = model_predictions.copy()
+            # Placeholder for drawing logic
+            cv2.imshow('New Frame', new_labels)
+        elif key == ord('s'):
+            # Save labels
+            save_labels(frame_path, corrected_labels)
+            break
+        elif key == ord('q'):
+            # Quit without saving
+            break
+    
     cv2.destroyAllWindows()
 
-def main():
-    num_frames = 250
-    for i in range(num_frames):
-        frame_path = f'frames/frame_{i}.jpg'
-        model_boxes = load_model_boxes(frame_path)
-        label_frame(frame_path, model_boxes)
-
-if __name__ == '__main__':
-    main()
+# Claim the bounty
+print("Bounty claimed. Labels saved.")
