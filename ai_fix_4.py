@@ -1,54 +1,56 @@
 import cv2
 import os
+import json
 
-def label_frames(dataset_path, num_frames):
-    for i in range(num_frames):
-        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
+# Constants
+DATASET_PATH = 'path/to/ultrank_11_20'
+LABELS_PATH = 'path/to/labels'
+FRAME_COUNT = 250
+
+# Load model predictions (assuming a function that loads predictions)
+def load_model_predictions(frame_index):
+    # Placeholder function
+    return {'boxes': [[100, 100, 200, 200], [300, 300, 400, 400]]}
+
+# Save labels to JSON
+def save_labels(frame_index, labels):
+    with open(os.path.join(LABELS_PATH, f'frame_{frame_index}.json'), 'w') as f:
+        json.dump(labels, f)
+
+# Main labeling function
+def label_frames():
+    for frame_index in range(FRAME_COUNT):
+        frame_path = os.path.join(DATASET_PATH, f'frame_{frame_index}.jpg')
         frame = cv2.imread(frame_path)
-        if frame is None:
-            print(f"Frame {i} not found.")
-            continue
+        predictions = load_model_predictions(frame_index)
         
-        model_boxes = get_model_boxes(frame_path)  # Assume this function retrieves model's bounding boxes
+        # Draw model predictions
+        for box in predictions['boxes']:
+            cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
         
-        while True:
-            cv2.imshow('Frame', frame)
-            key = cv2.waitKey(0) & 0xFF
-            
-            if key == ord('a'):
-                for box in model_boxes:
-                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+        # Display frame and get user input
+        cv2.imshow('Frame', frame)
+        key = cv2.waitKey(0) & 0xFF
+        
+        if key == ord('a'):
+            # Adopt model predictions
+            labels = predictions
+        elif key == ord('d'):
+            # Draw new boxes
+            labels = {'boxes': []}
+            while True:
                 cv2.imshow('Frame', frame)
-            elif key == ord('d'):
-                new_box = draw_new_box(frame)
-                if new_box:
-                    cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
-                    cv2.imshow('Frame', frame)
-            elif key == ord('s'):
-                save_labels(frame_path, model_boxes)
-                break
-            elif key == ord('q'):
-                break
+                key = cv2.waitKey(0) & 0xFF
+                if key == ord('s'):
+                    break
+                elif key == ord('n'):
+                    new_box = [int(x) for x in input("Enter new box coordinates (x1, y1, x2, y2): ").split()]
+                    labels['boxes'].append(new_box)
         
-        if key == ord('q'):
-            break
+        # Save labels
+        save_labels(frame_index, labels)
+    
+    cv2.destroyAllWindows()
 
-def get_model_boxes(frame_path):
-    # Placeholder function to retrieve model's bounding boxes
-    # Replace with actual implementation
-    return []
-
-def draw_new_box(frame):
-    # Placeholder function to draw new bounding boxes
-    # Replace with actual implementation
-    return None
-
-def save_labels(frame_path, boxes):
-    # Placeholder function to save labels
-    # Replace with actual implementation
-    pass
-
-if __name__ == "__main__":
-    dataset_path = 'path_to_dataset'
-    num_frames = 250
-    label_frames(dataset_path, num_frames)
+# Run the labeling process
+label_frames()
