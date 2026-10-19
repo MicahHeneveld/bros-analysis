@@ -1,29 +1,49 @@
 import cv2
-import numpy as np
+import os
 
-def load_model_boxes(frame_path):
-    # Placeholder function to load model boxes
-    # Replace this with actual logic to load model boxes
-    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
+# Constants
+DATASET_PATH = 'path/to/ultrank_11_20'
+LABELS_PATH = 'path/to/labels'
+NUM_FRAMES = 250
 
-def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
-    for box in boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
-    return image
+# Load model predictions (assuming a function that loads predictions)
+def load_model_predictions(frame_path):
+    # Placeholder function
+    return []
 
-def label_frame(frame_path, model_boxes):
-    image = cv2.imread(frame_path)
-    image_with_boxes = draw_boxes(image.copy(), model_boxes)
-    cv2.imshow('Label Frame', image_with_boxes)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+# Save labels (assuming a function that saves labels)
+def save_labels(frame_path, labels):
+    # Placeholder function
+    pass
 
-def main():
-    frame_count = 250
-    for i in range(frame_count):
-        frame_path = f'path/to/frame_{i}.jpg'
-        model_boxes = load_model_boxes(frame_path)
-        label_frame(frame_path, model_boxes)
+# Main labeling function
+def label_frames():
+    for i in range(NUM_FRAMES):
+        frame_path = os.path.join(DATASET_PATH, f'frame_{i}.jpg')
+        labels = load_model_predictions(frame_path)
+        image = cv2.imread(frame_path)
+        
+        while True:
+            cv2.imshow('Frame', image)
+            for label in labels:
+                cv2.rectangle(image, (label['x1'], label['y1']), (label['x2'], label['y2']), (0, 255, 0), 2)
+            
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('a'):
+                # Adopt all model boxes and fix inaccuracies
+                for label in labels:
+                    # Placeholder for fixing inaccuracies
+                    pass
+            elif key == ord('d'):
+                # Draw new boxes
+                # Placeholder for drawing new boxes
+                pass
+            elif key == ord('q'):
+                # Save labels and break
+                save_labels(frame_path, labels)
+                break
+        
+        cv2.destroyAllWindows()
 
-if __name__ == '__main__':
-    main()
+# Run the labeling process
+label_frames()
