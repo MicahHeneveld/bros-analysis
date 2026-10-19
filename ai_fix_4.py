@@ -2,41 +2,56 @@ import cv2
 import numpy as np
 
 def load_model_boxes(frame_path):
-    # Placeholder function to load model boxes
-    # Replace this with actual model box loading logic
+    # Placeholder function to load model's initial bounding boxes
+    # This should be replaced with actual model inference code
     return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-def draw_boxes(image, boxes):
+def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
     for box in boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
     return image
-
-def label_frame(frame_path, model_boxes):
-    frame = cv2.imread(frame_path)
-    annotated_frame = draw_boxes(frame, model_boxes)
-    cv2.imshow('Label Frame', annotated_frame)
-    key = cv2.waitKey(0)
-    if key == ord('a'):
-        return model_boxes
-    elif key == ord('d'):
-        # Placeholder for manual labeling logic
-        # Replace this with actual manual labeling logic
-        return np.array([[150, 150, 250, 250], [350, 350, 450, 450]])
-    return None
 
 def main():
     frame_count = 250
-    for i in range(frame_count):
-        frame_path = f'frames/frame_{i}.jpg'
+    for frame_id in range(frame_count):
+        frame_path = f"path/to/frame_{frame_id}.jpg"
+        image = cv2.imread(frame_path)
         model_boxes = load_model_boxes(frame_path)
-        labels = label_frame(frame_path, model_boxes)
-        if labels is not None:
-            # Placeholder for saving labels
-            # Replace this with actual saving logic
-            print(f'Saved labels for frame {i}')
-        else:
-            print(f'No labels saved for frame {i}')
-    cv2.destroyAllWindows()
+        image_with_boxes = draw_boxes(image, model_boxes)
+        
+        while True:
+            cv2.imshow('Frame', image_with_boxes)
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('a'):
+                # Adopt model's boxes and correct them
+                corrected_boxes = correct_boxes(model_boxes)
+                image_with_boxes = draw_boxes(image, corrected_boxes)
+            elif key == ord('d'):
+                # Draw new boxes
+                new_boxes = draw_new_boxes(image)
+                image_with_boxes = draw_boxes(image, new_boxes)
+            elif key == ord('q'):
+                break
+        
+        cv2.destroyAllWindows()
+        save_labels(frame_id, corrected_boxes)
 
-if __name__ == '__main__':
+def correct_boxes(boxes):
+    # Placeholder function to correct boxes
+    # This should be replaced with actual correction logic
+    return boxes
+
+def draw_new_boxes(image):
+    # Placeholder function to draw new boxes
+    # This should be replaced with actual drawing logic
+    return np.array([[50, 50, 150, 150]])
+
+def save_labels(frame_id, boxes):
+    # Placeholder function to save labels
+    # This should be replaced with actual saving logic
+    with open(f"path/to/labels/frame_{frame_id}.txt", "w") as f:
+        for box in boxes:
+            f.write(f"{box[0]} {box[1]} {box[2]} {box[3]}\n")
+
+if __name__ == "__main__":
     main()
