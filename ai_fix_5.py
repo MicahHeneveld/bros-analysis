@@ -1,19 +1,37 @@
-import os
-import sys
-import subprocess
+import cv2
+import numpy as np
 
-def claim_task(task_number):
-    with open('issue.txt', 'a') as file:
-        file.write(f'claim {task_number}\n')
+def load_model_boxes(frame_path):
+    # Placeholder function to load model boxes
+    # Replace this with actual model box loading logic
+    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-def run_bounty_script(task_number):
-    subprocess.run(['python', 'scripts/bounty.py', 'start', str(task_number)])
+def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
+    for box in boxes:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
+    return image
 
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python script.py <task_number>")
-        sys.exit(1)
+def label_frame(frame_path, model_boxes):
+    frame = cv2.imread(frame_path)
+    frame = draw_boxes(frame, model_boxes)
+    cv2.imshow('Label Frame', frame)
+    key = cv2.waitKey(0)
+    if key == ord('a'):
+        # Adopt model boxes and fix manually
+        pass
+    elif key == ord('d'):
+        # Draw labels manually
+        pass
+    cv2.destroyAllWindows()
+    return frame
 
-    task_number = sys.argv[1]
-    claim_task(task_number)
-    run_bounty_script(task_number)
+def main():
+    dataset_path = 'path_to_dataset'
+    num_frames = 250
+    for i in range(num_frames):
+        frame_path = f'{dataset_path}/frame_{i}.jpg'
+        model_boxes = load_model_boxes(frame_path)
+        label_frame(frame_path, model_boxes)
+
+if __name__ == '__main__':
+    main()
