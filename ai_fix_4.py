@@ -3,7 +3,7 @@ import numpy as np
 
 def load_model_boxes(frame_path):
     # Placeholder function to load model boxes
-    # Replace with actual model box loading logic
+    # Replace this with actual logic to load model boxes
     return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
 def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
@@ -11,25 +11,19 @@ def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
         cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
     return image
 
-def label_frames(frame_paths, model_boxes_path, output_path):
-    model_boxes = load_model_boxes(model_boxes_path)
-    for frame_path in frame_paths:
-        frame = cv2.imread(frame_path)
-        frame_with_boxes = draw_boxes(frame, model_boxes)
-        cv2.imshow('Frame', frame_with_boxes)
-        key = cv2.waitKey(0) & 0xFF
-        if key == ord('a'):
-            # Adopt and correct model boxes
-            pass
-        elif key == ord('d'):
-            # Draw new boxes
-            pass
-        cv2.destroyAllWindows()
-        # Save labels
-        pass
+def label_frame(frame_path, model_boxes):
+    image = cv2.imread(frame_path)
+    image_with_boxes = draw_boxes(image.copy(), model_boxes)
+    cv2.imshow('Label Frame', image_with_boxes)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-if __name__ == "__main__":
-    frame_paths = [f"path/to/frame_{i}.jpg" for i in range(250)]
-    model_boxes_path = "path/to/model_boxes.txt"
-    output_path = "path/to/output_labels.txt"
-    label_frames(frame_paths, model_boxes_path, output_path)
+def main():
+    num_frames = 250
+    for i in range(num_frames):
+        frame_path = f'frames/frame_{i}.jpg'
+        model_boxes = load_model_boxes(frame_path)
+        label_frame(frame_path, model_boxes)
+
+if __name__ == '__main__':
+    main()
