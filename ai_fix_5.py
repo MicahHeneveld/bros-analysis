@@ -1,56 +1,63 @@
-import os
 import cv2
-import numpy as np
+import os
 
-def label_frames(dataset_path, output_path, num_frames):
-    # Load the model's bounding boxes (assuming they are stored in a file)
-    model_boxes = load_model_boxes(dataset_path)
+# Constants
+DATASET_PATH = 'path/to/ultrank_11_20'
+LABELS_PATH = 'path/to/labels'
+MODEL_BBOXES_PATH = 'path/to/model_bboxes'
+NUM_FRAMES = 250
 
-    # Create output directory if it doesn't exist
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
+# Load model bounding boxes
+def load_model_bboxes():
+    model_bboxes = {}
+    with open(MODEL_BBOXES_PATH, 'r') as f:
+        for line in f:
+            frame, bbox = line.strip().split(',')
+            model_bboxes[frame] = eval(bbox)
+    return model_bboxes
 
-    for i in range(num_frames):
-        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
-        frame = cv2.imread(frame_path)
+# Save labels
+def save_labels(frame, labels):
+    with open(os.path.join(LABELS_PATH, f'{frame}.txt'), 'w') as f:
+        for label in labels:
+            f.write(f'{label}\n')
 
-        # Draw model bounding boxes on the frame
-        for box in model_boxes[i]:
-            cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-
-        # Allow user to modify the bounding boxes
+# Main labeling function
+def label_frames():
+    model_bboxes = load_model_bboxes()
+    for frame in range(1, NUM_FRAMES + 1):
+        frame_path = os.path.join(DATASET_PATH, f'frame_{frame}.jpg')
+        if not os.path.exists(frame_path):
+            print(f'Frame {frame} not found')
+            continue
+        
+        img = cv2.imread(frame_path)
+        if frame in model_bboxes:
+            for bbox in model_bboxes[frame]:
+                cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 2)
+        
+        cv2.imshow('Label Frame', img)
+        labels = []
         while True:
-            cv2.imshow('Frame', frame)
             key = cv2.waitKey(0) & 0xFF
-
             if key == ord('a'):
-                # Adopt all model bounding boxes
+                # Adopt model's bounding boxes
+                for bbox in model_bboxes[frame]:
+                    labels.append(f'{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}')
                 break
             elif key == ord('d'):
-                # Draw bounding boxes by hand
-                # This part is pseudo-code and needs to be implemented based on user input
-                pass
+                # Draw new bounding boxes
+                bbox = cv2.selectROI('Label Frame', img, fromCenter=False, showCrosshair=True)
+                labels.append(f'{int(bbox[0])},{int(bbox[1])},{int(bbox[0] + bbox[2])},{int(bbox[1] + bbox[3])}')
+                cv2.destroyROI('Label Frame')
+                break
             elif key == ord('q'):
                 # Quit without saving
                 cv2.destroyAllWindows()
                 return
+        
+        save_labels(frame, labels)
+        cv2.destroyAllWindows()
 
-        # Save the labeled frame
-        output_frame_path = os.path.join(output_path, f'frame_{i}_labeled.jpg')
-        cv2.imwrite(output_frame_path, frame)
-
-    cv2.destroyAllWindows()
-
-def load_model_boxes(dataset_path):
-    # Placeholder function to load model bounding boxes
-    # This should be replaced with actual logic to load the bounding boxes
-    model_boxes = []
-    for i in range(250):
-        model_boxes.append([[100, 100, 200, 200], [300, 300, 400, 400]])  # Example bounding boxes
-    return model_boxes
-
-# Example usage
-dataset_path = 'path/to/ultrank_11_20'
-output_path = 'path/to/output'
-num_frames = 250
-label_frames(dataset_path, output_path, num_frames)
+if __name__ == '__main__':
+    label_frames()
