@@ -9,42 +9,46 @@ def label_frames(dataset_path, num_frames):
             print(f"Frame {i} not found.")
             continue
         
-        model_boxes = get_model_boxes(i)  # Function to get model boxes from the model
-        cv2.imshow('Frame', frame)
+        model_boxes = get_model_boxes(frame_path)  # Assume this function retrieves model's bounding boxes
         
         while True:
+            cv2.imshow('Frame', frame)
             key = cv2.waitKey(0) & 0xFF
+            
             if key == ord('a'):
                 for box in model_boxes:
                     cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
                 cv2.imshow('Frame', frame)
             elif key == ord('d'):
-                draw_labels(frame)  # Function to draw labels manually
-                cv2.imshow('Frame', frame)
+                new_box = draw_new_box(frame)
+                if new_box:
+                    cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
+                    cv2.imshow('Frame', frame)
             elif key == ord('s'):
-                save_labels(i, frame)  # Function to save labels
-                cv2.destroyAllWindows()
+                save_labels(frame_path, model_boxes)
                 break
             elif key == ord('q'):
-                cv2.destroyAllWindows()
                 break
+        
+        if key == ord('q'):
+            break
 
-def get_model_boxes(frame_index):
-    # Placeholder function to get model boxes
-    return [(100, 100, 200, 200), (300, 300, 400, 400)]
+def get_model_boxes(frame_path):
+    # Placeholder function to retrieve model's bounding boxes
+    # Replace with actual implementation
+    return []
 
-def draw_labels(frame):
-    # Placeholder function to draw labels manually
-    cv2.rectangle(frame, (150, 150, 250, 250), (0, 0, 255), 2)
-    cv2.putText(frame, 'Object', (150, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+def draw_new_box(frame):
+    # Placeholder function to draw new bounding boxes
+    # Replace with actual implementation
+    return None
 
-def save_labels(frame_index, frame):
+def save_labels(frame_path, boxes):
     # Placeholder function to save labels
-    output_path = os.path.join('labeled_frames', f'frame_{frame_index}_labeled.jpg')
-    cv2.imwrite(output_path, frame)
-    print(f"Frame {frame_index} labeled and saved.")
+    # Replace with actual implementation
+    pass
 
-# Example usage
-dataset_path = 'path_to_dataset'
-num_frames = 250
-label_frames(dataset_path, num_frames)
+if __name__ == "__main__":
+    dataset_path = 'path_to_dataset'
+    num_frames = 250
+    label_frames(dataset_path, num_frames)
