@@ -6,27 +6,36 @@ def label_frames(dataset_path, num_frames):
         frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
         frame = cv2.imread(frame_path)
         if frame is None:
-            print(f"Error: Unable to read frame {i}")
+            print(f"Frame {i} not found.")
             continue
         
+        model_boxes = get_model_boxes(frame_path)  # Assume this function retrieves model's bounding boxes
+        cv2.imshow('Frame', frame)
+        
         while True:
-            cv2.imshow('Frame', frame)
             key = cv2.waitKey(0) & 0xFF
-            
             if key == ord('a'):
-                # Adopt model's boxes and correct them
-                # Placeholder for model's box correction logic
-                pass
+                for box in model_boxes:
+                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+                cv2.imshow('Frame', frame)
             elif key == ord('d'):
-                # Draw new boxes
-                # Placeholder for drawing new boxes logic
-                pass
+                new_box = draw_new_box(frame)
+                if new_box:
+                    cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
+                    cv2.imshow('Frame', frame)
             elif key == ord('q'):
-                # Save labels and break
-                cv2.imwrite(frame_path, frame)
                 break
-    
-    cv2.destroyAllWindows()
+        
+        cv2.imwrite(frame_path, frame)
+        cv2.destroyAllWindows()
+
+def get_model_boxes(frame_path):
+    # Placeholder function to simulate model's bounding boxes
+    return [(10, 10, 50, 50), (100, 100, 150, 150)]
+
+def draw_new_box(frame):
+    # Placeholder function to simulate drawing a new bounding box
+    return (200, 200, 250, 250)
 
 if __name__ == "__main__":
     dataset_path = 'path_to_dataset'
