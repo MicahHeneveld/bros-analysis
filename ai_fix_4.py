@@ -1,60 +1,42 @@
-import os
-import sys
 import cv2
 import numpy as np
 
-def load_model_boxes(model_path):
+def load_model_boxes(frame_path):
     # Placeholder function to load model boxes
-    # Replace with actual implementation
+    # Replace this with actual model box loading logic
     return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
+def draw_boxes(image, boxes):
     for box in boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
     return image
 
-def label_frames(dataset_path, model_boxes_path, output_path):
-    model_boxes = load_model_boxes(model_boxes_path)
-    frames = os.listdir(dataset_path)
-    frames.sort()
+def label_frame(frame_path, model_boxes):
+    frame = cv2.imread(frame_path)
+    annotated_frame = draw_boxes(frame, model_boxes)
+    cv2.imshow('Label Frame', annotated_frame)
+    key = cv2.waitKey(0)
+    if key == ord('a'):
+        return model_boxes
+    elif key == ord('d'):
+        # Placeholder for manual labeling logic
+        # Replace this with actual manual labeling logic
+        return np.array([[150, 150, 250, 250], [350, 350, 450, 450]])
+    return None
 
-    for frame_name in frames:
-        frame_path = os.path.join(dataset_path, frame_name)
-        image = cv2.imread(frame_path)
-        if image is None:
-            print(f"Error: Unable to read frame {frame_name}")
-            continue
-
-        labeled_image = draw_boxes(image, model_boxes)
-        cv2.imshow('Label Frame', labeled_image)
-        key = cv2.waitKey(0) & 0xFF
-
-        if key == ord('a'):
-            # Adopt all model boxes
-            pass
-        elif key == ord('d'):
-            # Draw new boxes
-            pass
-        elif key == ord('s'):
-            # Save the labeled image
-            output_frame_path = os.path.join(output_path, frame_name)
-            cv2.imwrite(output_frame_path, labeled_image)
-            print(f"Saved {output_frame_path}")
-        elif key == ord('q'):
-            break
-
+def main():
+    frame_count = 250
+    for i in range(frame_count):
+        frame_path = f'frames/frame_{i}.jpg'
+        model_boxes = load_model_boxes(frame_path)
+        labels = label_frame(frame_path, model_boxes)
+        if labels is not None:
+            # Placeholder for saving labels
+            # Replace this with actual saving logic
+            print(f'Saved labels for frame {i}')
+        else:
+            print(f'No labels saved for frame {i}')
     cv2.destroyAllWindows()
 
-if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python label_frames.py <dataset_path> <model_boxes_path> <output_path>")
-        sys.exit(1)
-
-    dataset_path = sys.argv[1]
-    model_boxes_path = sys.argv[2]
-    output_path = sys.argv[3]
-
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-
-    label_frames(dataset_path, model_boxes_path, output_path)
+if __name__ == '__main__':
+    main()
