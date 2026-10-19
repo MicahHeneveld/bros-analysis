@@ -1,40 +1,32 @@
 import cv2
-import os
+import numpy as np
 
-def label_frames(dataset_path, num_frames):
-    # Load the model's boxes (assuming they are stored in a file)
-    model_boxes = load_model_boxes(dataset_path)
+def load_model_boxes(frame_path):
+    # Placeholder function to load model boxes
+    # Replace with actual model box loading logic
+    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-    for i in range(num_frames):
-        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
-        frame = cv2.imread(frame_path)
+def draw_boxes(frame, boxes):
+    for box in boxes:
+        cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+    return frame
 
-        # Adopt and correct model's boxes
-        for box in model_boxes:
-            x, y, w, h = box
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+def label_frame(frame_path, model_boxes):
+    frame = cv2.imread(frame_path)
+    frame = draw_boxes(frame, model_boxes)
+    cv2.imshow('Label Frame', frame)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    return frame
 
-        # Draw new boxes if necessary
-        while True:
-            cv2.imshow('Frame', frame)
-            key = cv2.waitKey(0) & 0xFF
-            if key == ord('a'):
-                # Adopt all model's boxes
-                break
-            elif key == ord('d'):
-                # Draw new box
-                x, y = cv2.getMousePos()
-                cv2.rectangle(frame, (x, y), (x + 10, y + 10), (0, 0, 255), 2)
-
-        # Save the labeled frame
-        cv2.imwrite(os.path.join(dataset_path, f'frame_{i}_labeled.jpg'), frame)
-
-def load_model_boxes(dataset_path):
-    # Placeholder function to load model's boxes
-    # Replace this with actual logic to load model's boxes
-    return [(10, 10, 50, 50), (100, 100, 30, 30)]
-
-if __name__ == "__main__":
-    dataset_path = 'path_to_ultrank_11_20_dataset'
+def main():
     num_frames = 250
-    label_frames(dataset_path, num_frames)
+    for i in range(num_frames):
+        frame_path = f'path/to/frame_{i}.jpg'
+        model_boxes = load_model_boxes(frame_path)
+        labeled_frame = label_frame(frame_path, model_boxes)
+        # Save the labeled frame
+        cv2.imwrite(f'path/to/labeled_frame_{i}.jpg', labeled_frame)
+
+if __name__ == '__main__':
+    main()
