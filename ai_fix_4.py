@@ -1,52 +1,30 @@
 import cv2
-import os
+import numpy as np
 
-# Constants
-DATASET_PATH = 'path/to/ultrank_11_20'
-LABELS_PATH = 'path/to/labels'
-MODEL_BOXES_PATH = 'path/to/model_boxes'
-KEY_A = ord('a')
-KEY_D = ord('d')
-KEY_N = ord('n')
-KEY_ENTER = ord('\r')
+def load_model_boxes(frame_path):
+    # Placeholder function to load model boxes
+    # Replace this with actual model box loading logic
+    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-# Load model boxes
-def load_model_boxes():
-    with open(MODEL_BOXES_PATH, 'r') as file:
-        model_boxes = [line.strip().split() for line in file]
-    return model_boxes
+def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
+    for box in boxes:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
+    return image
 
-# Save labels
-def save_labels(frame_index, labels):
-    label_file = os.path.join(LABELS_PATH, f'frame_{frame_index}.txt')
-    with open(label_file, 'w') as file:
-        for label in labels:
-            file.write(' '.join(label) + '\n')
+def label_frame(frame_path, model_boxes):
+    frame = cv2.imread(frame_path)
+    frame_with_boxes = draw_boxes(frame.copy(), model_boxes)
+    cv2.imshow('Label Frame', frame_with_boxes)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-# Main labeling function
-def label_frames(num_frames):
-    model_boxes = load_model_boxes()
-    for frame_index in range(num_frames):
-        frame_path = os.path.join(DATASET_PATH, f'frame_{frame_index}.jpg')
-        frame = cv2.imread(frame_path)
-        labels = []
-        
-        while True:
-            cv2.imshow('Frame', frame)
-            key = cv2.waitKey(0) & 0xFF
-            
-            if key == KEY_A:
-                for box in model_boxes:
-                    labels.append(box)
-            elif key == KEY_D:
-                # Draw new box logic here
-                pass
-            elif key == KEY_N or key == KEY_ENTER:
-                save_labels(frame_index, labels)
-                break
-        
-        cv2.destroyAllWindows()
+def main():
+    num_frames = 250
+    for i in range(num_frames):
+        frame_path = f'path/to/frame_{i}.jpg'
+        model_boxes = load_model_boxes(frame_path)
+        label_frame(frame_path, model_boxes)
+    print("All frames labeled.")
 
-# Run the labeling process
-if __name__ == '__main__':
-    label_frames(250)
+if __name__ == "__main__":
+    main()
