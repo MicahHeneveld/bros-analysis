@@ -83,7 +83,7 @@
   const MODE_NAME = { labels: 'Labels', model: 'Model', both: 'Both' };
   // Bump alongside the ?v= on the asset tags in index.html. Worth noticing: the
   // footer prints it, so a stale page is obvious at a glance instead of silent.
-  const UI_VERSION = 'v23';
+  const UI_VERSION = 'v24';
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('canvas');
@@ -306,8 +306,12 @@
 
     const spot = $('tourSpot');
     const target = step.target ? document.querySelector(step.target) : null;
+    const r = target ? target.getBoundingClientRect() : null;
     const overlay = $('tourOverlay');
-    if (!target) {
+    // A target can exist but be unpainted: no image selected, no suggestions to
+    // adopt, or the Video tab is open. Spotlighting a zero-sized box would leave
+    // the card pointing at nothing, so those steps get the centred treatment.
+    if (!r || !r.width || !r.height) {
       // No element to point at: dim the whole screen instead of relying on the
       // spotlight's shadow, which only exists when there is a spot.
       overlay.classList.add('no-target');
@@ -316,7 +320,6 @@
       return;
     }
     overlay.classList.remove('no-target');
-    const r = target.getBoundingClientRect();
     const pad = 6;
     // Clamp to the viewport: a target flush against an edge would otherwise put
     // a negative offset on the spotlight and leave a sliver un-dimmed.

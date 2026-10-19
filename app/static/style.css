@@ -1027,6 +1027,10 @@ body.bounty-locked #fixBlock { display: none !important; }
 /* The cursor only suggests drawing where drawing is possible. */
 body.view-mode #canvas { cursor: default; }
 
+/* The walkthrough explains labelling a bounty. Browsing has nothing to teach
+   beyond the board's own Tour, so the top-bar opener stays out of the way. */
+body.view-mode #tourBtn { display: none; }
+
 /* -------------------------------------------------------------- walkthrough */
 .tour-overlay { position: fixed; inset: 0; z-index: 80; }
 /* Steps with no target element dim uniformly; the spotlight's huge box-shadow
