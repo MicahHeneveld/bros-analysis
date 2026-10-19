@@ -1,64 +1,48 @@
 import cv2
-import os
+import numpy as np
 
-def adopt_and_fix_bounding_boxes(image_path, model_boxes):
-    image = cv2.imread(image_path)
-    for box in model_boxes:
-        x, y, w, h = box
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    cv2.imshow('Image', image)
-    cv2.waitKey(0)
+def load_model():
+    # Placeholder for loading the model
+    return None
+
+def draw_bounding_boxes(image, boxes):
+    for box in boxes:
+        cv2.rectangle(image, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
+    return image
+
+def label_frame(frame, model_boxes):
+    cv2.imshow('Frame', draw_bounding_boxes(frame, model_boxes))
+    key = cv2.waitKey(0)
+    if key == ord('a'):
+        return True, model_boxes
+    elif key == ord('d'):
+        new_box = cv2.selectROI('Frame', frame, fromCenter=False, showCrosshair=True)
+        return True, np.vstack((model_boxes, new_box))
+    return False, model_boxes
+
+def main():
+    model = load_model()
+    cap = cv2.VideoCapture('ultrank_11_20.mp4')
+    frame_count = 0
+    all_boxes = []
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if frame_count % 250 == 0:
+            model_boxes = model.predict(frame)
+            continue
+        adopt, boxes = label_frame(frame, model_boxes)
+        if adopt:
+            all_boxes.append(boxes)
+        frame_count += 1
+
+    cap.release()
     cv2.destroyAllWindows()
+    return all_boxes
 
-def draw_new_bounding_boxes(image_path):
-    image = cv2.imread(image_path)
-    cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback('Image', draw_rectangle)
-    drawing = False
-    ix, iy = -1, -1
-    boxes = []
-
-    def draw_rectangle(event, x, y, flags, param):
-        nonlocal ix, iy, drawing, boxes
-        if event == cv2.EVENT_LBUTTONDOWN:
-            drawing = True
-            ix, iy = x, y
-        elif event == cv2.EVENT_MOUSEMOVE:
-            if drawing:
-                cv2.rectangle(image, (ix, iy), (x, y), (0, 255, 0), 2)
-                cv2.imshow('Image', image)
-        elif event == cv2.EVENT_LBUTTONUP:
-            drawing = False
-            cv2.rectangle(image, (ix, iy), (x, y), (0, 255, 0), 2)
-            boxes.append((ix, iy, x - ix, y - iy))
-            cv2.imshow('Image', image)
-
-    cv2.imshow('Image', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    return boxes
-
-def label_frames(dataset_path, num_frames):
-    for i in range(num_frames):
-        image_path = os.path.join(dataset_path, f'frame_{i}.jpg')
-        model_boxes = get_model_boxes(image_path)  # Replace with actual model box retrieval logic
-        if model_boxes:
-            adopt_and_fix_bounding_boxes(image_path, model_boxes)
-        else:
-            boxes = draw_new_bounding_boxes(image_path)
-            save_labels(image_path, boxes)  # Replace with actual label saving logic
-
-def get_model_boxes(image_path):
-    # Replace with actual model box retrieval logic
-    return [(100, 100, 50, 50), (200, 200, 30, 30)]  # Example model boxes
-
-def save_labels(image_path, boxes):
-    # Replace with actual label saving logic
-    with open(image_path.replace('.jpg', '.txt'), 'w') as f:
-        for box in boxes:
-            f.write(f'{box[0]} {box[1]} {box[2]} {box[3]}\n')
-
-if __name__ == '__main__':
-    dataset_path = 'path_to_dataset'
-    num_frames = 250
-    label_frames(dataset_path, num_frames)
+if __name__ == "__main__":
+    boxes = main()
+    # Save the boxes to a file or database
+    np.save('labeled_boxes.npy', boxes)
