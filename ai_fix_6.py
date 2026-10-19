@@ -1,48 +1,37 @@
 import cv2
 import numpy as np
 
-def load_model():
-    # Placeholder for loading the model
-    return None
+def load_model_boxes(frame_path):
+    # Placeholder function to load model boxes
+    # Replace this with actual logic to load model boxes
+    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-def draw_bounding_boxes(image, boxes):
+def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
     for box in boxes:
-        cv2.rectangle(image, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
     return image
 
-def label_frame(frame, model_boxes):
-    cv2.imshow('Frame', draw_bounding_boxes(frame, model_boxes))
+def label_frame(frame_path, model_boxes):
+    frame = cv2.imread(frame_path)
+    frame = draw_boxes(frame, model_boxes)
+    cv2.imshow('Frame', frame)
     key = cv2.waitKey(0)
     if key == ord('a'):
-        return True, model_boxes
+        return model_boxes
     elif key == ord('d'):
-        new_box = cv2.selectROI('Frame', frame, fromCenter=False, showCrosshair=True)
-        return True, np.vstack((model_boxes, new_box))
-    return False, model_boxes
+        return draw_boxes(frame, [], color=(0, 0, 255), thickness=2)
+    return None
 
 def main():
-    model = load_model()
-    cap = cv2.VideoCapture('ultrank_11_20.mp4')
-    frame_count = 0
-    all_boxes = []
+    dataset_path = 'path_to_dataset'
+    frames = [f for f in os.listdir(dataset_path) if f.endswith('.jpg')]
+    for frame in frames:
+        frame_path = os.path.join(dataset_path, frame)
+        model_boxes = load_model_boxes(frame_path)
+        labeled_boxes = label_frame(frame_path, model_boxes)
+        if labeled_boxes is not None:
+            # Save the labeled boxes to a file or database
+            pass
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_count % 250 == 0:
-            model_boxes = model.predict(frame)
-            continue
-        adopt, boxes = label_frame(frame, model_boxes)
-        if adopt:
-            all_boxes.append(boxes)
-        frame_count += 1
-
-    cap.release()
-    cv2.destroyAllWindows()
-    return all_boxes
-
-if __name__ == "__main__":
-    boxes = main()
-    # Save the boxes to a file or database
-    np.save('labeled_boxes.npy', boxes)
+if __name__ == '__main__':
+    main()
