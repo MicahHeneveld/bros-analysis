@@ -1,38 +1,55 @@
-import cv2
 import os
+import cv2
+import numpy as np
 
-def label_frames(dataset_path, num_frames):
-    for i in range(num_frames):
-        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
-        frame = cv2.imread(frame_path)
-        model_boxes = get_model_boxes(frame_path)  # Assume this function retrieves model's bounding boxes
+def load_frames(dataset_path):
+    frames = []
+    for filename in os.listdir(dataset_path):
+        if filename.endswith(".jpg") or filename.endswith(".png"):
+            frame_path = os.path.join(dataset_path, filename)
+            frame = cv2.imread(frame_path)
+            frames.append(frame)
+    return frames
 
-        while True:
-            cv2.imshow('Frame', frame)
-            key = cv2.waitKey(0) & 0xFF
+def draw_bounding_boxes(frame, boxes):
+    for box in boxes:
+        x, y, w, h = box
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    return frame
 
-            if key == ord('a'):
-                for box in model_boxes:
-                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-                cv2.imwrite(frame_path, frame)
-                break
-            elif key == ord('d'):
-                new_box = draw_new_box(frame)
-                model_boxes.append(new_box)
-                cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
-                cv2.imwrite(frame_path, frame)
+def save_labels(dataset_path, labels):
+    for i, label in enumerate(labels):
+        with open(os.path.join(dataset_path, f"frame_{i+1}.txt"), "w") as f:
+            for box in label:
+                f.write(f"{box[0]} {box[1]} {box[2]} {box[3]}\n")
 
+def main():
+    dataset_path = "path/to/ultrank_11_20"
+    frames = load_frames(dataset_path)
+    labels = []
+
+    for i, frame in enumerate(frames):
+        print(f"Labeling frame {i+1} of {len(frames)}")
+        boxes = model.predict(frame)  # Assuming model.predict returns bounding boxes
+        labeled_frame = draw_bounding_boxes(frame, boxes)
+        cv2.imshow("Frame", labeled_frame)
+        cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-def get_model_boxes(frame_path):
-    # Placeholder function to simulate model's bounding box retrieval
-    return [(100, 100, 200, 200), (300, 300, 400, 400)]
+        label = []
+        while True:
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('a'):
+                label.extend(boxes)
+                break
+            elif key == ord('d'):
+                x, y, w, h = cv2.selectROI("Frame", labeled_frame, fromCenter=False, showCrosshair=True)
+                label.append([x, y, w, h])
+                cv2.destroyWindow("Frame")
+        labels.append(label)
 
-def draw_new_box(frame):
-    # Placeholder function to simulate drawing a new bounding box
-    return (150, 150, 250, 250)
+    save_labels(dataset_path, labels)
+    print("Labels saved successfully.")
 
 if __name__ == "__main__":
-    dataset_path = 'path_to_dataset'
-    num_frames = 250
-    label_frames(dataset_path, num_frames)
+    main()
