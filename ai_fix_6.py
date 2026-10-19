@@ -1,54 +1,52 @@
 import cv2
-import numpy as np
+import os
 
-def label_frames(video_path, num_frames):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print("Error: Could not open video.")
-        return
-
-    for _ in range(num_frames):
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Could not read frame.")
+def label_frames(dataset_path, num_frames):
+    for i in range(num_frames):
+        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            print(f"Frame {i} not found.")
+            continue
+        
+        model_boxes = get_model_boxes(frame_path)  # Assume this function retrieves model-generated bounding boxes
+        cv2.imshow('Frame', frame)
+        
+        while True:
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('a'):
+                for box in model_boxes:
+                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+                cv2.imshow('Frame', frame)
+            elif key == ord('d'):
+                new_box = draw_new_box(frame)
+                if new_box:
+                    cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
+                    cv2.imshow('Frame', frame)
+            elif key == ord('s'):
+                save_frame(frame, frame_path)
+                break
+            elif key == ord('q'):
+                break
+        
+        if key == ord('q'):
             break
 
-        # Display the frame
-        cv2.imshow('Frame', frame)
+def get_model_boxes(frame_path):
+    # Placeholder function to retrieve model-generated bounding boxes
+    # Replace this with actual model inference code
+    return [(100, 100, 200, 200), (300, 300, 400, 400)]
 
-        # Wait for a key press
-        key = cv2.waitKey(0) & 0xFF
+def draw_new_box(frame):
+    # Placeholder function to draw new bounding boxes
+    # Replace this with actual drawing code
+    return (50, 50, 150, 150)
 
-        if key == ord('a'):
-            # Adopt model's boxes (placeholder for actual model boxes)
-            model_boxes = get_model_boxes(frame)
-            draw_boxes(frame, model_boxes)
+def save_frame(frame, frame_path):
+    cv2.imwrite(frame_path, frame)
 
-        elif key == ord('d'):
-            # Draw labels manually
-            draw_boxes(frame, [])
-
-        # Save the frame with labels (placeholder for actual saving logic)
-        save_frame_with_labels(frame)
-
-    cap.release()
+if __name__ == "__main__":
+    dataset_path = 'path_to_dataset'
+    num_frames = 250
+    label_frames(dataset_path, num_frames)
     cv2.destroyAllWindows()
-
-def get_model_boxes(frame):
-    # Placeholder function to get model boxes
-    # Replace with actual model inference logic
-    return []
-
-def draw_boxes(frame, boxes):
-    for box in boxes:
-        cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-
-def save_frame_with_labels(frame):
-    # Placeholder function to save frame with labels
-    # Replace with actual saving logic
-    pass
-
-# Example usage
-video_path = 'path_to_video.mp4'
-num_frames = 250
-label_frames(video_path, num_frames)
