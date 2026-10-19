@@ -3,37 +3,33 @@ import numpy as np
 
 def load_model_boxes(frame_path):
     # Placeholder function to load model boxes
-    # Replace this with actual model inference code
+    # Replace this with actual logic to load model boxes
     return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-def draw_boxes(frame, boxes):
+def draw_boxes(image, boxes):
     for box in boxes:
-        cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-    return frame
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+    return image
 
-def label_frame(frame_path):
-    frame = cv2.imread(frame_path)
-    model_boxes = load_model_boxes(frame_path)
-    frame = draw_boxes(frame, model_boxes)
-    
-    cv2.imshow('Label Frame', frame)
+def label_frame(frame_path, model_boxes):
+    image = cv2.imread(frame_path)
+    image_with_boxes = draw_boxes(image, model_boxes)
+    cv2.imshow('Label Frame', image_with_boxes)
     key = cv2.waitKey(0)
-    
     if key == ord('a'):
-        # Adopt all model boxes
+        # Adopt model boxes and fix inaccuracies
         pass
     elif key == ord('d'):
-        # Draw new boxes
+        # Draw labels manually
         pass
-    
     cv2.destroyAllWindows()
-    return frame
+    return image_with_boxes
 
 def main():
-    for i in range(250):
-        frame_path = f'ultrank_11_20/frame_{i}.jpg'
-        labeled_frame = label_frame(frame_path)
-        cv2.imwrite(f'ultrank_11_20/labeled_frame_{i}.jpg', labeled_frame)
+    frame_paths = [f'frames/frame_{i}.jpg' for i in range(250)]
+    for frame_path in frame_paths:
+        model_boxes = load_model_boxes(frame_path)
+        label_frame(frame_path, model_boxes)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
