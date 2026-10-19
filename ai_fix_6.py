@@ -9,7 +9,7 @@ def label_frames(dataset_path, num_frames):
             print(f"Frame {i} not found.")
             continue
         
-        model_boxes = get_model_boxes(frame_path)  # Assume this function retrieves model-generated bounding boxes
+        model_boxes = get_model_boxes(frame_path)  # Assume this function fetches model's bounding boxes
         cv2.imshow('Frame', frame)
         
         while True:
@@ -19,34 +19,32 @@ def label_frames(dataset_path, num_frames):
                     cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
                 cv2.imshow('Frame', frame)
             elif key == ord('d'):
-                new_box = draw_new_box(frame)
-                if new_box:
-                    cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
-                    cv2.imshow('Frame', frame)
+                new_box = draw_new_box(frame)  # Assume this function draws a new bounding box
+                cv2.rectangle(frame, (new_box[0], new_box[1]), (new_box[2], new_box[3]), (0, 0, 255), 2)
+                cv2.imshow('Frame', frame)
             elif key == ord('s'):
-                save_frame(frame, frame_path)
+                save_labels(frame_path, model_boxes, new_boxes)  # Assume this function saves the labels
                 break
             elif key == ord('q'):
                 break
         
-        if key == ord('q'):
-            break
+        cv2.destroyAllWindows()
 
 def get_model_boxes(frame_path):
-    # Placeholder function to retrieve model-generated bounding boxes
-    # Replace this with actual model inference code
-    return [(100, 100, 200, 200), (300, 300, 400, 400)]
+    # Placeholder function to fetch model's bounding boxes
+    return [(10, 10, 50, 50), (100, 100, 150, 150)]
 
 def draw_new_box(frame):
-    # Placeholder function to draw new bounding boxes
-    # Replace this with actual drawing code
-    return (50, 50, 150, 150)
+    # Placeholder function to draw a new bounding box
+    return (200, 200, 250, 250)
 
-def save_frame(frame, frame_path):
-    cv2.imwrite(frame_path, frame)
+def save_labels(frame_path, model_boxes, new_boxes):
+    # Placeholder function to save the labels
+    with open(frame_path.replace('.jpg', '.txt'), 'w') as f:
+        for box in model_boxes + new_boxes:
+            f.write(f"{box[0]} {box[1]} {box[2]} {box[3]}\n")
 
 if __name__ == "__main__":
     dataset_path = 'path_to_dataset'
     num_frames = 250
     label_frames(dataset_path, num_frames)
-    cv2.destroyAllWindows()
