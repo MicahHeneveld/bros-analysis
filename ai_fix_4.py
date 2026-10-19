@@ -4,60 +4,48 @@ import os
 # Constants
 DATASET_PATH = 'path/to/ultrank_11_20'
 LABELS_PATH = 'path/to/labels'
-MODEL_BOXES_PATH = 'path/to/model_boxes'
-KEY_A = ord('a')
-KEY_D = ord('d')
-NUM_FRAMES = 250
+FRAME_COUNT = 250
 
-def load_model_boxes(frame_index):
-    # Load model boxes for the given frame index
-    model_boxes = []
-    # Add logic to load model boxes from MODEL_BOXES_PATH
-    return model_boxes
+# Load model predictions (assuming a function that loads predictions for a given frame)
+def load_model_predictions(frame_path):
+    # Placeholder function
+    return []
 
-def draw_boxes(image, boxes):
-    # Draw bounding boxes on the image
-    for box in boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-    return image
+# Save labels (assuming a function that saves labels for a given frame)
+def save_labels(frame_path, labels):
+    # Placeholder function
+    pass
 
-def save_labels(frame_index, boxes):
-    # Save the labels for the given frame index
-    label_path = os.path.join(LABELS_PATH, f'frame_{frame_index}.txt')
-    with open(label_path, 'w') as f:
-        for box in boxes:
-            f.write(f'{box[0]} {box[1]} {box[2]} {box[3]}\n')
-
-def main():
-    for frame_index in range(NUM_FRAMES):
-        # Load the frame
-        frame_path = os.path.join(DATASET_PATH, f'frame_{frame_index}.jpg')
-        image = cv2.imread(frame_path)
+# Main labeling function
+def label_frames():
+    for frame_id in range(FRAME_COUNT):
+        frame_path = os.path.join(DATASET_PATH, f'frame_{frame_id}.jpg')
+        labels = load_model_predictions(frame_path)
         
-        # Load model boxes
-        model_boxes = load_model_boxes(frame_index)
+        # Load frame
+        frame = cv2.imread(frame_path)
         
-        # Draw model boxes on the image
-        image = draw_boxes(image, model_boxes)
+        # Draw model predictions
+        for label in labels:
+            x, y, w, h = label
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
         
-        # Display the image and get user input
+        # Display frame and get user input
         while True:
-            cv2.imshow('Frame', image)
+            cv2.imshow('Frame', frame)
             key = cv2.waitKey(0) & 0xFF
             
-            if key == KEY_A:
-                # Adopt model boxes and correct inaccuracies
-                # Add logic to correct inaccuracies
+            if key == ord('a'):  # Adopt model boxes
+                save_labels(frame_path, labels)
                 break
-            elif key == KEY_D:
-                # Draw new bounding boxes
-                # Add logic to draw new boxes
-                break
+            elif key == ord('d'):  # Draw new boxes
+                # Placeholder for drawing new boxes
+                pass
+            elif key == ord('q'):  # Quit
+                cv2.destroyAllWindows()
+                return
         
-        # Save the labels
-        save_labels(frame_index, model_boxes)
-    
-    cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
 
-if __name__ == '__main__':
-    main()
+# Run the labeling process
+label_frames()
