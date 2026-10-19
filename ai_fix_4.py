@@ -1,33 +1,50 @@
 import cv2
-import numpy as np
+import os
 
-def load_model_boxes(frame_path):
-    # Placeholder function to load model boxes
-    # Replace this with actual logic to load model boxes
-    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
+def label_frames(dataset_path, num_frames):
+    for i in range(num_frames):
+        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            print(f"Frame {i} not found.")
+            continue
+        
+        model_boxes = get_model_boxes(i)  # Function to get model boxes from the model
+        cv2.imshow('Frame', frame)
+        
+        while True:
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('a'):
+                for box in model_boxes:
+                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+                cv2.imshow('Frame', frame)
+            elif key == ord('d'):
+                draw_labels(frame)  # Function to draw labels manually
+                cv2.imshow('Frame', frame)
+            elif key == ord('s'):
+                save_labels(i, frame)  # Function to save labels
+                cv2.destroyAllWindows()
+                break
+            elif key == ord('q'):
+                cv2.destroyAllWindows()
+                break
 
-def draw_boxes(image, boxes):
-    for box in boxes:
-        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-    return image
+def get_model_boxes(frame_index):
+    # Placeholder function to get model boxes
+    return [(100, 100, 200, 200), (300, 300, 400, 400)]
 
-def label_frame(frame_path, model_boxes):
-    image = cv2.imread(frame_path)
-    image_with_boxes = draw_boxes(image, model_boxes)
-    cv2.imshow('Label Frame', image_with_boxes)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    return image_with_boxes
+def draw_labels(frame):
+    # Placeholder function to draw labels manually
+    cv2.rectangle(frame, (150, 150, 250, 250), (0, 0, 255), 2)
+    cv2.putText(frame, 'Object', (150, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-def main():
-    dataset_path = 'path_to_dataset'
-    frames = [f for f in os.listdir(dataset_path) if f.endswith('.jpg')]
-    for frame in frames[:250]:
-        frame_path = os.path.join(dataset_path, frame)
-        model_boxes = load_model_boxes(frame_path)
-        labeled_frame = label_frame(frame_path, model_boxes)
-        # Save the labeled frame
-        cv2.imwrite(os.path.join(dataset_path, f'labeled_{frame}'), labeled_frame)
+def save_labels(frame_index, frame):
+    # Placeholder function to save labels
+    output_path = os.path.join('labeled_frames', f'frame_{frame_index}_labeled.jpg')
+    cv2.imwrite(output_path, frame)
+    print(f"Frame {frame_index} labeled and saved.")
 
-if __name__ == '__main__':
-    main()
+# Example usage
+dataset_path = 'path_to_dataset'
+num_frames = 250
+label_frames(dataset_path, num_frames)
