@@ -1,39 +1,40 @@
 import cv2
-import os
+import numpy as np
 
-def label_frames(dataset_path, num_frames):
-    for i in range(num_frames):
-        frame_path = os.path.join(dataset_path, f'frame_{i}.jpg')
-        frame = cv2.imread(frame_path)
-        if frame is None:
-            print(f"Error: Unable to read frame {i}")
-            continue
-        
-        while True:
-            cv2.imshow('Frame', frame)
-            key = cv2.waitKey(0) & 0xFF
-            
-            if key == ord('a'):
-                # Adopt model's boxes and correct them
-                # Placeholder for model's boxes adoption and correction logic
-                pass
-            elif key == ord('d'):
-                # Draw new boxes
-                # Placeholder for drawing new boxes logic
-                pass
-            elif key == ord('q'):
-                # Save labels and break the loop
-                cv2.imwrite(frame_path, frame)
-                break
-            elif key == ord('c'):
-                # Cancel and break the loop
-                break
-        
-        if key == ord('c'):
-            print(f"Cancelled labeling of frame {i}")
-            continue
+def load_model_boxes(frame_path):
+    # Placeholder function to load model boxes
+    # Replace this with actual logic to load model boxes
+    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
+
+def draw_boxes(image, boxes):
+    for box in boxes:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+    return image
+
+def label_frame(frame_path, model_boxes):
+    image = cv2.imread(frame_path)
+    image_with_boxes = draw_boxes(image, model_boxes)
+    cv2.imshow('Label Frame', image_with_boxes)
+    key = cv2.waitKey(0)
+    if key == ord('a'):
+        # Adopt all model boxes and fix inaccuracies
+        # Placeholder for fixing inaccuracies
+        pass
+    elif key == ord('d'):
+        # Draw labels manually
+        # Placeholder for manual drawing
+        pass
+    cv2.destroyAllWindows()
+    return image_with_boxes
+
+def main():
+    frame_count = 250
+    for i in range(frame_count):
+        frame_path = f'frames/frame_{i}.jpg'
+        model_boxes = load_model_boxes(frame_path)
+        labeled_frame = label_frame(frame_path, model_boxes)
+        cv2.imwrite(f'labeled_frames/labeled_frame_{i}.jpg', labeled_frame)
+    print("All frames labeled.")
 
 if __name__ == "__main__":
-    dataset_path = 'path_to_dataset'
-    num_frames = 250
-    label_frames(dataset_path, num_frames)
+    main()
