@@ -103,6 +103,7 @@ What that unlocks, and where each is documented:
 | :--- | :--- | :--- |
 | `scripts/ingest_video.py` | MP4 → every sampled frame, pre-labelled | torch, ultralytics, opencv, numpy |
 | `scripts/extract_frames.py` | VOD → frames (raw, no gating) | opencv |
+| `scripts/make_thumbs.py` | Filmstrip thumbnails for an existing dataset | opencv |
 | `scripts/stage_dataset.py` | Drive dataset zip → local `.staging/` | pyyaml |
 | `scripts/train_ssbu.py` · `notebooks/` | Training and prediction | ultralytics, torch (+ Colab) |
 | `scripts/measure_distance.py` | Per-frame fighter separation | none — stdlib only |
@@ -207,11 +208,13 @@ app/
   label_io.py                # YOLO parse/serialize, atomic writes, journal, backups
   review_store.py            # review status, reasons, notes, progress
   server.py                  # stdlib HTTP server: API + static + thumbnails
-  selftest.py                # 361 assertions, no test framework needed
+  thumbnails.py              # thumb paths + the one cv2 resize encode
+  selftest.py                # 378 assertions, no test framework needed
   static/                    # index.html, style.css, app.js (canvas editor)
 scripts/
   ingest_video.py            # MP4 → every sampled frame + pre-labels, ready to review
   extract_frames.py          # VOD → frames (raw, no gating)
+  make_thumbs.py             # backfill filmstrip thumbs for an existing dataset
   prepare_cvat_import.py     # YOLO preds → CVAT zip
   check_drive_layout.py      # Drive folder sanity check
   paths_config.py            # shared path helpers

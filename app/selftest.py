@@ -531,6 +531,75 @@ def test_sample_filters() -> None:
                              split="val", kind="unfound_label"))
 
 
+def test_thumbnails() -> None:
+    """The filmstrip must not download full-size frames.
+
+    The review server is stdlib-only, so it has no decoder and used to serve the
+    source JPEG for every tile (~90 MB per 250-frame bounty). Thumbs are written
+    where cv2 already exists - ingest and make_thumbs.py - and served as files.
+    """
+    print("\n[thumbnails]")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import thumbnails as tn
+
+    tmp = Path(tempfile.mkdtemp(prefix="thumbs-"))
+    try:
+        root = tmp / "ds"
+        image_id = "m1_video/m1_video_frame_000012"
+
+        def to_file(root: Path, image_id: str) -> Path:
+            return root / "thumbs" / f"{image_id}.jpg"
+
+        dest = tn.thumb_path(root, image_id)
+        check("thumb mirrors the split layout",
+              dest == to_file(root, image_id), str(dest))
+        check("thumb has its own extension",
+              dest.suffix == ".jpg" and not str(dest).endswith("_frame_000012.jpg.jpg"),
+              str(dest))
+
+        check("missing thumb is None", tn.existing(root, image_id) is None)
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"")
+        check("zero-byte thumb is treated as missing",
+              tn.existing(root, image_id) is None, "empty file was served")
+        dest.write_bytes(b"\xff\xd8thumb")
+        check("written thumb is found", tn.existing(root, image_id) == dest.resolve())
+
+        # image_id is attacker-controlled (it is the URL path). A thumb lookup
+        # must never read outside thumbs/, even when the file exists.
+        outside = tmp / "secret.jpg"
+        outside.write_bytes(b"secret")
+        check("traversal is refused",
+              tn.existing(root, "../secret") is None, "escaped thumbs/")
+        check("absolute path is refused",
+              tn.existing(root, str(tmp / "secret")) is None, "escaped thumbs/")
+
+        # Encoding is optional: the server imports this module with no cv2.
+        try:
+            import numpy as np
+
+            import cv2  # noqa: F401
+        except Exception:  # noqa: BLE001
+            check("encode degrades to None without a decoder",
+                  tn.encode(object()) is None)
+        else:
+            frame = np.zeros((360, 640, 3), dtype="uint8")
+            frame[:, :, 1] = 200
+            data = tn.encode(frame, width=160)
+            check("encode returns jpeg bytes",
+                  bool(data) and data[:2] == b"\xff\xd8", repr((data or b"")[:2]))
+            decoded = cv2.imdecode(np.frombuffer(data, dtype="uint8"), cv2.IMREAD_COLOR)
+            check("thumb is scaled to the requested width",
+                  decoded.shape[1] == 160 and decoded.shape[0] == 90, str(decoded.shape))
+
+            written = tn.write(frame, tmp / "w" / "a.jpg", width=160)
+            check("write creates the file", written > 0 and (tmp / "w" / "a.jpg").exists())
+            check("write is smaller than the source frame",
+                  written < 640 * 360 * 3 / 20, str(written))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_ingest_gating() -> None:
     """The gameplay gate is what decides which frames reach the dataset.
 
@@ -1516,6 +1585,53 @@ def test_image_bundle_extraction() -> None:
               str(sorted(p.name for p in dest.iterdir())))
         check("no nested wrapper under dest",
               not (dest / "bundle").exists(), str(sorted(p.name for p in dest.iterdir())))
+
+        # Thumbs ride along with the images. Serving them from disk is what keeps
+        # the filmstrip off the full-size files on a cv2-less interpreter.
+        thumbs_root = tmp / "withthumbs"
+        (thumbs_root / "images" / "m1").mkdir(parents=True)
+        (thumbs_root / "images" / "m1" / "a.jpg").write_bytes(b"x")
+        (thumbs_root / "thumbs" / "m1").mkdir(parents=True)
+        (thumbs_root / "thumbs" / "m1" / "a.jpg").write_bytes(b"thumb")
+        found = bounty_mod._images_root(thumbs_root)
+        src_thumbs = bounty_mod._thumbs_root(thumbs_root, found)
+        check("thumbs/ found beside images/", src_thumbs == thumbs_root / "thumbs", str(src_thumbs))
+
+        td = tmp / "thumbsout"
+        (td / "images").mkdir(parents=True)
+        bounty_mod._copy_tree(found, td / "images")
+        bounty_mod._copy_tree(src_thumbs, td / "thumbs")
+        check("thumbs mirror the split layout",
+              (td / "thumbs" / "m1" / "a.jpg").read_bytes() == b"thumb",
+              str(sorted(p.as_posix() for p in td.rglob("*"))))
+
+        # A bundle with no thumbs (everything published before this existed)
+        # must not be treated as broken.
+        check("missing thumbs/ is None",
+              bounty_mod._thumbs_root(tmp / "flat", bounty_mod._images_root(tmp / "flat")) is None)
+
+        # Publishing must put thumbs in the zip, or a contributor who fetches the
+        # bundle gets images and then re-downloads them at full size for the strip.
+        import zipfile
+
+        import jobs as jobs_mod
+
+        package = tmp / "pkg"
+        (package / "images" / "m1").mkdir(parents=True)
+        (package / "images" / "m1" / "a.jpg").write_bytes(b"x")
+        (package / "thumbs" / "m1").mkdir(parents=True)
+        (package / "thumbs" / "m1" / "a.jpg").write_bytes(b"thumb")
+        (package / "labels" / "m1").mkdir(parents=True)
+        (package / "labels" / "m1" / "a.txt").write_text("")
+        bundle = tmp / "out.zip"
+        added = jobs_mod.write_bundle(package, bundle)
+        with zipfile.ZipFile(bundle) as zf:
+            names = set(zf.namelist())
+        check("bundle carries images and thumbs", added == 2, str(sorted(names)))
+        check("bundle skips labels (that is git's job)",
+              "labels/m1/a.txt" not in names, str(sorted(names)))
+        check("bundle keeps the split path",
+              {"images/m1/a.jpg", "thumbs/m1/a.jpg"} == names, str(sorted(names)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1857,6 +1973,7 @@ def main() -> int:
     test_postprocess()
     test_adopt_prediction_flow()
     test_ingest_gating()
+    test_thumbnails()
     test_distance_metric()
     test_review_counts()
     test_sample_filters()

@@ -330,8 +330,12 @@ Publishing the images a bounty depends on:
 
 ```bash
 # One zip per dataset, tagged images-<dataset>. Contributors fetch it with
-# `bounty.py fetch`, so the archive needs no credentials.
-cd data/datasets/ssbu_players && zip -qr /tmp/ssbu_players-images.zip images
+# `bounty.py fetch`, so the archive needs no credentials. Include thumbs/ when
+# it exists: without it the review filmstrip downloads full-size frames.
+.venv-train/bin/python scripts/make_thumbs.py data/datasets/ssbu_players
+cd data/datasets/ssbu_players
+zip -qr /tmp/ssbu_players-images.zip images
+if [ -d thumbs ]; then zip -qr /tmp/ssbu_players-images.zip thumbs; fi
 gh release create images-ssbu_players /tmp/ssbu_players-images.zip \
     --title "ssbu_players images" --notes-file docs/release-notes-ssbu_players.md
 ```

@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 # `  120 sampled -> 120 saved` from ingest_video.py's periodic progress line.
@@ -49,6 +50,38 @@ def ingest_python(repo_root: Path) -> Path:
         if candidate.exists():
             return candidate
     return Path(sys.executable)
+
+
+def write_bundle(dataset: Path, bundle: Path) -> int:
+    """Zip ``images/`` and ``thumbs/`` from a dataset into one bundle.
+
+    Both are published together because a reviewer who fetches frames also needs
+    the filmstrip thumbnails; fetching images without them would send every
+    contributor straight back to downloading full-size frames.
+
+    Written with ``zipfile`` rather than ``shutil.make_archive`` because that
+    helper takes a single ``base_dir``. Returns the number of files added.
+    """
+    added = 0
+    already_compressed = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".webm"}
+    with zipfile.ZipFile(bundle, "w") as zf:
+        for folder in ("images", "thumbs"):
+            root = dataset / folder
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file():
+                    continue
+                # JPEGs do not compress; deflating a 1.3 GB bundle to save ~1%
+                # just makes publishing slower.
+                method = (
+                    zipfile.ZIP_STORED
+                    if path.suffix.lower() in already_compressed
+                    else zipfile.ZIP_DEFLATED
+                )
+                zf.write(path, path.relative_to(dataset).as_posix(), compress_type=method)
+                added += 1
+    return added
 
 
 def probe_video(python: Path, video: Path, timeout: float = 30.0) -> dict:
@@ -346,7 +379,7 @@ class JobRunner:
         bundle = self.repo_root / ".staging" / "bundles" / f"{name}.zip"
         try:
             bundle.parent.mkdir(parents=True, exist_ok=True)
-            shutil.make_archive(str(bundle.with_suffix("")), "zip", root_dir=dataset, base_dir="images")
+            write_bundle(dataset, bundle)
             res = subprocess.run(
                 ["gh", "release", "create", f"images-{name}", str(bundle),
                  "--title", f"{name} images",

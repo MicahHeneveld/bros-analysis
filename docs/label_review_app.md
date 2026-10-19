@@ -325,7 +325,7 @@ Sample ids are split-relative paths, e.g. `train/Diverse-SSBU-Dataset_frame_0000
 | `GET` | `/api/samples?split=&status=&q=&offset=&limit=` | paged samples with box counts and status |
 | `GET` | `/api/sample/<id>` | image size, parsed boxes, review record, warnings |
 | `GET` | `/api/image/<id>` | full-resolution image |
-| `GET` | `/api/thumb/<id>` | cv2-downscaled JPEG thumbnail |
+| `GET` | `/api/thumb/<id>` | filmstrip thumbnail (precomputed file, else a cv2 downscale) |
 | `PUT` | `/api/sample/<id>/labels` | replace boxes (atomic write + journal + backup) |
 | `POST` | `/api/sample/<id>/review` | set status, reasons, note |
 | `POST` | `/api/undo/<id>` | revert the last journaled edit |
@@ -338,7 +338,7 @@ Sample ids are split-relative paths, e.g. `train/Diverse-SSBU-Dataset_frame_0000
 python app/selftest.py
 ```
 
-51 assertions covering round-trip byte identity (including CRLF and blank lines),
+378 assertions covering round-trip byte identity (including CRLF and blank lines),
 malformed-row preservation, clamping, degenerate boxes, decode safety, atomic
 save/journal/backup/undo, path traversal, cache protection, and review-store
 persistence. No test framework required.
@@ -406,8 +406,32 @@ Verified against the real dataset via `curl` and a driven browser session:
 
 ## Out of scope (this pass)
 
-Tracking/distance/event annotation (Phase 1B), multi-class labels, polygons, and
-pre-generating thumbnails for the whole dataset (the strip loads lazily per page).
+Tracking/distance/event annotation (Phase 1B), multi-class labels, and polygons.
+
+## Thumbnails
+
+The filmstrip shows 200 tiles at 160 px wide. Serving the source frame for each
+tile is ~90 MB per 250-frame bounty, and the server cannot shrink an image itself
+(it is stdlib-only, so a normal install has no cv2, Pillow or ffmpeg).
+
+So thumbs are written wherever cv2 is already a requirement:
+
+| Producer | Writes |
+|---|---|
+| `scripts/ingest_video.py` | `thumbs/<split>/<stem>.jpg` beside every saved frame |
+| `scripts/make_thumbs.py` | the same path, for datasets ingested before thumbs existed |
+
+```bash
+.venv-train/bin/python scripts/make_thumbs.py data/datasets/ultrank_11_20
+```
+
+`/api/thumb/<id>` then serves that file directly. Datasets without a `thumbs/`
+tree still work: the server falls back to cv2 if it is installed, and to the
+full-size image if not. Re-running ingest also repairs missing thumbs without
+re-encoding the frames.
+
+Thumbs are ignored by git and published inside the `images-<dataset>` release
+bundle, so `bounty.py fetch --dataset ...` brings them along.
 
 Inference deliberately runs in Colab rather than locally: `torch` and `ultralytics`
 are not in this venv and would add roughly 2 GB to it. The app only reads the small
