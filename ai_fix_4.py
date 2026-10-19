@@ -1,51 +1,60 @@
-import cv2
 import os
+import sys
+import cv2
+import numpy as np
 
-# Constants
-DATASET_PATH = 'path/to/ultrank_11_20'
-LABELS_PATH = 'path/to/labels'
-FRAME_COUNT = 250
+def load_model_boxes(model_path):
+    # Placeholder function to load model boxes
+    # Replace with actual implementation
+    return np.array([[100, 100, 200, 200], [300, 300, 400, 400]])
 
-# Load model predictions (assuming a function that loads predictions for a given frame)
-def load_model_predictions(frame_path):
-    # Placeholder function
-    return cv2.imread(frame_path, cv2.IMREAD_GRAYSCALE)
+def draw_boxes(image, boxes, color=(0, 255, 0), thickness=2):
+    for box in boxes:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, thickness)
+    return image
 
-# Save labels (assuming a function that saves labels for a given frame)
-def save_labels(frame_path, labels):
-    # Placeholder function
-    cv2.imwrite(frame_path, labels)
+def label_frames(dataset_path, model_boxes_path, output_path):
+    model_boxes = load_model_boxes(model_boxes_path)
+    frames = os.listdir(dataset_path)
+    frames.sort()
 
-# Main labeling loop
-for frame_index in range(FRAME_COUNT):
-    frame_path = os.path.join(DATASET_PATH, f'frame_{frame_index}.jpg')
-    model_predictions = load_model_predictions(frame_path)
-    
-    # Display model predictions
-    cv2.imshow('Frame', model_predictions)
-    
-    while True:
+    for frame_name in frames:
+        frame_path = os.path.join(dataset_path, frame_name)
+        image = cv2.imread(frame_path)
+        if image is None:
+            print(f"Error: Unable to read frame {frame_name}")
+            continue
+
+        labeled_image = draw_boxes(image, model_boxes)
+        cv2.imshow('Label Frame', labeled_image)
         key = cv2.waitKey(0) & 0xFF
-        
+
         if key == ord('a'):
-            # Adopt model predictions and correct them
-            corrected_labels = model_predictions.copy()
-            # Placeholder for correction logic
-            cv2.imshow('Corrected Frame', corrected_labels)
+            # Adopt all model boxes
+            pass
         elif key == ord('d'):
             # Draw new boxes
-            new_labels = model_predictions.copy()
-            # Placeholder for drawing logic
-            cv2.imshow('New Frame', new_labels)
+            pass
         elif key == ord('s'):
-            # Save labels
-            save_labels(frame_path, corrected_labels)
-            break
+            # Save the labeled image
+            output_frame_path = os.path.join(output_path, frame_name)
+            cv2.imwrite(output_frame_path, labeled_image)
+            print(f"Saved {output_frame_path}")
         elif key == ord('q'):
-            # Quit without saving
             break
-    
+
     cv2.destroyAllWindows()
 
-# Claim the bounty
-print("Bounty claimed. Labels saved.")
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python label_frames.py <dataset_path> <model_boxes_path> <output_path>")
+        sys.exit(1)
+
+    dataset_path = sys.argv[1]
+    model_boxes_path = sys.argv[2]
+    output_path = sys.argv[3]
+
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    label_frames(dataset_path, model_boxes_path, output_path)
